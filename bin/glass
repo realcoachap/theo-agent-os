@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.1.0 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.2.2 - Noted by Theo - 2026-06-10.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
+
+Railway review mode is intentionally read-only. It exists so Coach and Fable
+can inspect Shot 2 through a stable URL without exposing local operator writes.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
+REMOTE_REVIEW = False
 
 
 def utc_now() -> str:
@@ -57,6 +61,8 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 5) -> subprocess
 
 
 def local_host_header(value: str | None) -> bool:
+    if REMOTE_REVIEW:
+        return True
     if not value:
         return True
     host = value.rsplit("@", 1)[-1].split(":", 1)[0].strip("[]").lower()
@@ -64,6 +70,8 @@ def local_host_header(value: str | None) -> bool:
 
 
 def same_origin(value: str | None) -> bool:
+    if REMOTE_REVIEW:
+        return True
     if not value:
         return True
     parsed = urlparse(value)
@@ -332,6 +340,8 @@ def state() -> dict[str, object]:
     runs = load_runs()
     return {
         "generated_at": utc_now(),
+        "mode": "railway-review" if REMOTE_REVIEW else "local",
+        "writes_enabled": not REMOTE_REVIEW,
         "runs": runs,
         "artifacts": artifact_list(runs),
         "repo_maps": repo_maps(runs),
@@ -339,7 +349,7 @@ def state() -> dict[str, object]:
         "memory_proposals": memory_proposals(runs),
         "workers": workers(),
         "security": security_checklist(),
-        "control_ui_url": "http://127.0.0.1:18789",
+        "control_ui_url": "" if REMOTE_REVIEW else "http://127.0.0.1:18789",
     }
 
 
@@ -488,7 +498,7 @@ pre {
     <h1>Theo Agent OS Glass</h1>
     <div class="subtle" id="stamp">loading</div>
   </div>
-  <a class="button" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
+  <a class="button hidden" id="control-link" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
 </header>
 <nav class="tabs" id="tabs"></nav>
 <main id="app"></main>
@@ -509,7 +519,14 @@ function tabBar() {
 async function loadState() {
   const res = await fetch("/api/state", {cache: "no-store"});
   appState = await res.json();
-  document.getElementById("stamp").textContent = `updated ${appState.generated_at}`;
+  document.getElementById("stamp").textContent = `${appState.mode || "local"} · updated ${appState.generated_at}`;
+  const control = document.getElementById("control-link");
+  if (appState.control_ui_url) {
+    control.href = appState.control_ui_url;
+    control.classList.remove("hidden");
+  } else {
+    control.classList.add("hidden");
+  }
   render();
 }
 function runCard(run) {
@@ -614,7 +631,7 @@ function renderProposals() {
   return `<section class="grid">${(appState.memory_proposals || []).map(p => `<article class="card">
     <div class="row"><div class="title">${esc(p.lane)}</div><span class="pill">${esc(short(p.source_job))}</span></div>
     <p>${esc(p.proposal)}</p>
-    <p><button onclick="queueProposalById('${esc(p.id)}', 'approve', this)">Approve</button> <button class="danger" onclick="queueProposalById('${esc(p.id)}', 'reject', this)">Reject</button></p>
+    ${appState.writes_enabled ? `<p><button onclick="queueProposalById('${esc(p.id)}', 'approve', this)">Approve</button> <button class="danger" onclick="queueProposalById('${esc(p.id)}', 'reject', this)">Reject</button></p>` : `<div class="blocked-box">read-only Railway review: proposal verdict writes disabled</div>`}
     <div class="subtle write-status"></div>
   </article>`).join("") || empty("No memory proposals.")}</section>`;
 }
@@ -626,7 +643,7 @@ function renderWorkers() {
       <div class="row"><div class="title">Operator (OpenClaw)</div><span class="pill ${operator.up ? "success" : "blocked"}">${operator.up ? "UP" : "DOWN"}</span></div>
       <p class="${operator.stale ? "blocked" : "success"}">${operator.stale ? "STALE" : "FRESH"}</p>
       <pre>${esc(JSON.stringify(operator, null, 2))}</pre>
-      <a class="button" target="_blank" rel="noreferrer" href="${esc(appState.control_ui_url)}">Open Control UI</a>
+      ${appState.control_ui_url ? `<a class="button" target="_blank" rel="noreferrer" href="${esc(appState.control_ui_url)}">Open Control UI</a>` : `<div class="blocked-box">Control UI is not exposed in Railway review mode.</div>`}
     </article>
     ${registry.map(w => `<article class="card">
       <div class="row"><div class="title">${esc(w.name)}</div><span class="pill ${w.adapter_pending ? "" : "success"}">${esc(w.status || "unknown")}</span></div>
@@ -647,9 +664,10 @@ async function updateCheck(item, checked, box) {
 function renderSecurity() {
   const items = ((appState.security || {}).items || []);
   return `<section class="grid">${items.map(item => `<article class="card">
-    <label class="row"><span class="title">${esc(item.label)}</span><input type="checkbox" ${item.checked ? "checked" : ""} onchange='updateCheck(${JSON.stringify(item).replaceAll("'", "&#39;")}, this.checked, this)'></label>
+    <label class="row"><span class="title">${esc(item.label)}</span><input type="checkbox" ${item.checked ? "checked" : ""} ${appState.writes_enabled ? "" : "disabled"} onchange='updateCheck(${JSON.stringify(item).replaceAll("'", "&#39;")}, this.checked, this)'></label>
     <p class="muted">${esc(item.description)}</p>
     <div class="subtle">updated ${esc(item.ts || "never")}</div>
+    ${appState.writes_enabled ? "" : `<div class="blocked-box">read-only Railway review: checklist writes disabled</div>`}
     <div class="subtle write-status"></div>
   </article>`).join("") || empty("No checklist configured.")}</section>`;
 }
@@ -677,7 +695,7 @@ setInterval(loadState, 3000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.1.0"
+    server_version = "TheoAgentOSGlass/0.2.2"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -710,6 +728,9 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def check_post(self) -> bool:
+        if REMOTE_REVIEW:
+            self.forbidden("Railway review mode is read-only")
+            return False
         if not self.check_host():
             return False
         if self.headers.get("X-Theo-Glass") != "1":
@@ -839,16 +860,19 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Theo Agent OS Glass on localhost only.")
+    parser = argparse.ArgumentParser(description="Run Theo Agent OS Glass.")
     parser.add_argument("--host", "--bind", dest="host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4040)
+    parser.add_argument("--remote-review", action="store_true", help="Allow non-local Host headers and disable writes for Railway-style public review.")
     return parser.parse_args()
 
 
 def main() -> int:
+    global REMOTE_REVIEW
     args = parse_args()
-    if args.host != "127.0.0.1":
-        print("Glass refuses non-local bind values; use 127.0.0.1.", file=sys.stderr)
+    REMOTE_REVIEW = args.remote_review
+    if args.host != "127.0.0.1" and not REMOTE_REVIEW:
+        print("Glass refuses non-local bind values unless --remote-review is set.", file=sys.stderr)
         return 2
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Glass listening on http://{args.host}:{args.port}")

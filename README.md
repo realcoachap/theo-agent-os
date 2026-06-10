@@ -177,3 +177,15 @@ Glass is deliberately read-mostly. It can append memory proposal verdicts to
 Unsafe HTML artifacts show a blocked badge unless the result envelope declares
 `safe_to_render=true`, and artifact preview paths must stay inside their own
 run directory.
+
+## Railway Review Surface
+
+Railway runs Glass in explicit read-only review mode:
+
+```bash
+bash scripts/start-glass-railway.sh
+```
+
+This mode binds to `0.0.0.0` for Railway, allows Railway Host headers, seeds
+demo Shot 2 runs when no run index exists, and disables Glass POST writes. It
+does not expose the local OpenClaw Control UI link.
