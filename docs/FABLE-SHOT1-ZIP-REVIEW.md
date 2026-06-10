@@ -117,3 +117,9 @@ canonical and flagged four useful fixes before Shot 3:
 - Duplicate schema aliases and duplicate example-job paths should be removed.
 
 Those fixes were applied as Shot 1.1 follow-up work.
+
+Fable then cut prompt-pack v0.1.2 with the binding env version: registry values
+must be `$VAR` strings, dispatch must fail loud when a referenced variable is
+missing, and child environments must strip caller `ANTHROPIC_BASE_URL` /
+`ANTHROPIC_API_KEY` unless the worker explicitly re-adds them. That stricter
+version is now the repo contract.

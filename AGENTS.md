@@ -63,8 +63,10 @@ Irreversible actions require approval before execution.
 - `schemas/job.schema.json` and `schemas/result.schema.json` are the active
   Shot 1 contracts.
 - `registry/workers.json` is the only worker manifest.
-- `env_profile` maps adapter env var -> caller env var. Do not map every worker
-  to shared `ANTHROPIC_*` names when worker-specific lanes need separate keys.
+- `env_profile` maps adapter env var -> `$CALLER_ENV_VAR`. Dispatch must block
+  when a referenced caller variable is missing.
+- Dispatch strips caller `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` from
+  every child env unless the worker profile explicitly re-adds them.
 - Dispatch exit codes are canonical: `0` success, `2` validation/semantic
   rejection, `3` blocked, `4` failed, `5` partial.
 - `runs/` is append-only generated history; never edit past result envelopes.

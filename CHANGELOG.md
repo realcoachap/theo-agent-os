@@ -6,8 +6,9 @@ Noted by Theo - 2026-06-09
 
 ### Fixed
 
-- Resolve worker `env_profile` through worker-specific caller variables so
-  `claude` and `claude-glm` can coexist without credential collisions.
+- Resolve worker `env_profile` through explicit `$VAR` caller references,
+  fail loud on missing variables, and strip stray caller `ANTHROPIC_*` values
+  from child environments unless a worker explicitly declares them.
 
 ### Changed
 

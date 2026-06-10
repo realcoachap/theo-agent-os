@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Foundry dispatcher v0.1.1 - Noted by Theo - 2026-06-09.
+"""Theo Agent OS Foundry dispatcher v0.1.2 - Noted by Theo - 2026-06-10.
 
 Routes one job envelope to one thin adapter, writes an append-only run record,
-and enforces the early gates before any worker sees the task.
+and enforces the early gates before any worker sees the task. Exit codes are
+canonical for operator glue: 0 success, 2 validation/semantic rejection before
+a run exists, 3 blocked, 4 failed, and 5 partial.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ REGISTRY = REPO_ROOT / "registry" / "workers.json"
 RUNS = REPO_ROOT / "runs"
 TIER_ORDER = {"read_only": 0, "write_sandboxed": 1, "write_trusted": 2}
 STATUS_EXIT = {"success": 0, "partial": 5, "blocked": 3, "failed": 4}
+STRIPPED_CHILD_ENV = {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
 
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -53,16 +56,29 @@ def registry_map() -> dict[str, dict[str, Any]]:
     return {worker["name"]: worker for worker in data.get("workers", [])}
 
 
-def worker_env(worker: dict[str, Any]) -> dict[str, str]:
-    """Resolve worker-specific caller env names into adapter env names."""
+def worker_env(worker: dict[str, Any], source_env: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """Resolve worker env targets from explicit $VAR caller references."""
+    source_env = source_env or os.environ
     resolved: dict[str, str] = {}
-    for target_key, source_key in worker.get("env_profile", {}).items():
-        source_name = str(source_key or target_key)
-        if source_name == "required_from_calling_environment":
-            source_name = target_key
-        if source_name in os.environ:
-            resolved[target_key] = os.environ[source_name]
-    return resolved
+    errors: list[str] = []
+    for target_key, source_ref in worker.get("env_profile", {}).items():
+        if not isinstance(source_ref, str) or not source_ref.startswith("$") or len(source_ref) == 1:
+            errors.append(f"env_profile.{target_key} must reference a calling env var as $VAR")
+            continue
+        source_name = source_ref[1:]
+        if source_name not in source_env or source_env[source_name] == "":
+            errors.append(f"missing required calling env var {source_name} for {target_key}")
+            continue
+        resolved[target_key] = source_env[source_name]
+    return resolved, errors
+
+
+def child_env_base(source_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Start child env from caller env, but strip route-changing Anthropic vars."""
+    env = dict(source_env or os.environ)
+    for key in STRIPPED_CHILD_ENV:
+        env.pop(key, None)
+    return env
 
 
 def lane_path(lane: str) -> Path:
@@ -266,6 +282,16 @@ def main() -> int:
             print(result_path)
             return 3
 
+    resolved_env, env_errors = worker_env(worker)
+    if env_errors:
+        summary = "Worker environment profile blocked launch: " + "; ".join(env_errors)
+        result = base_result(job, "blocked", summary, run_dir)
+        (run_dir / "transcript.md").write_text(summary + "\n", encoding="utf-8")
+        result_path = write_result(run_dir, result)
+        append_index(run_dir, job, result, started)
+        print(result_path)
+        return 3
+
     adapter = REPO_ROOT / "adapters" / f"{job['worker']}.sh"
     if not adapter.exists():
         result = base_result(job, "blocked", f"Adapter is not implemented for worker {job['worker']}.", run_dir)
@@ -283,7 +309,7 @@ def main() -> int:
         print(result_path)
         return 3
 
-    env = os.environ.copy()
+    env = child_env_base()
     env.update({
         "JOB_PATH": str(run_dir / "job.json"),
         "RUN_DIR": str(run_dir),
@@ -294,7 +320,7 @@ def main() -> int:
         "WORKER_NAME": job["worker"],
         "STARTED_EPOCH": str(started),
     })
-    env.update(worker_env(worker))
+    env.update(resolved_env)
     proc = subprocess.run([str(adapter)], cwd=lane, text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     (run_dir / "adapter.stdout.log").write_text(proc.stdout, encoding="utf-8")
     (run_dir / "adapter.stderr.log").write_text(proc.stderr, encoding="utf-8")

@@ -105,10 +105,17 @@ Status exit codes are part of the Foundry contract:
 - `partial` -> `5`
 
 `registry/workers.json` stores worker-specific environment indirection. Keys
-are the adapter environment variable names; values are the caller environment
-variable names. Example: `claude-glm` maps `ANTHROPIC_BASE_URL` from
-`ANTHROPIC_BASE_URL_GLM` so multiple Anthropic-compatible lanes can coexist
-without clobbering each other's credentials.
+are the adapter environment variable names; values are `$VAR` references to the
+calling environment. Example: `claude-glm` maps adapter
+`ANTHROPIC_BASE_URL` from `$THEO_GLM_BASE_URL`, so multiple
+Anthropic-compatible lanes can coexist without clobbering each other's
+credentials.
+
+Dispatch fails loud when a referenced `$VAR` is unset, writes a `blocked`
+result, and never launches the adapter half-credentialed. Dispatch also strips
+caller `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` from child environments by
+default; a worker only receives those names if its own `env_profile` explicitly
+sets them.
 
 Graphify has a labeled demo mode for machines without the CLI:
 

@@ -30,8 +30,8 @@
       "status": "adapter_pending",
       "protocols": ["anthropic"],
       "env_profile": {
-        "ANTHROPIC_BASE_URL": "ANTHROPIC_BASE_URL_GLM",
-        "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY_GLM"
+        "ANTHROPIC_BASE_URL": "$THEO_GLM_BASE_URL",
+        "ANTHROPIC_API_KEY": "$THEO_GLM_API_KEY"
       },
       "model_profiles": ["glm-5.1"],
       "strengths": ["bulk-implementation", "cheap-iteration"],

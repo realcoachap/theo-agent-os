@@ -13,7 +13,9 @@ Noted by Theo - 2026-06-09
 
 ## 2026-06-09 Task: Fable Shot 1 Review Patches
 
-- [x] Fix worker-specific env indirection for `claude-glm`.
+- [x] Fix worker-specific `$VAR` env indirection for `claude-glm`.
+- [x] Block missing env-profile variables before adapter launch.
+- [x] Strip stray caller `ANTHROPIC_*` from child env by default.
 - [x] Document canonical dispatch exit codes.
 - [x] Add labeled Graphify stub mode.
 - [x] Remove duplicate schema aliases and example directory.
