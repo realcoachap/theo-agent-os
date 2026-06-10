@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Mouth reply sender guard v0.4.2 - Noted by Theo - 2026-06-10.
+
+Validate a `jobs/outbox/<command_id>/reply.json` payload before the OpenClaw
+runtime sends it to Telegram. This binary deliberately does not contain bot
+tokens or call Telegram itself; it emits a narrow message-tool payload, then
+records delivery only after the runtime reports a message id.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
+DELIVERY_SCHEMA = REPO_ROOT / "schemas" / "delivery.schema.json"
+INBOX = REPO_ROOT / "jobs" / "inbox"
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def validator_errors(schema: Path, target: Path) -> list[str]:
+    proc = subprocess.run(
+        [str(REPO_ROOT / "bin" / "validate"), str(schema), str(target)],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode == 0:
+        return []
+    return [line.strip() for line in (proc.stderr or proc.stdout).splitlines() if line.strip()]
+
+
+def fail(message: str, code: int = 2) -> int:
+    print(message, file=sys.stderr)
+    return code
+
+
+def inside_repo(path_text: str) -> bool:
+    if not path_text:
+        return True
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    try:
+        path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return False
+    return path.exists()
+
+
+def command_for(reply: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
+    command_id = reply.get("command_id", "")
+    path = INBOX / str(command_id) / "command.json"
+    if not path.exists():
+        return path, None
+    data = load_json(path)
+    return path, data if isinstance(data, dict) else None
+
+
+def semantic_errors(reply: dict[str, Any], command: dict[str, Any], allow_test: bool) -> list[str]:
+    errors: list[str] = []
+    source = command.get("source", {})
+    delivery = command.get("delivery", {})
+    command_id = command.get("command_id")
+    channel = reply.get("channel")
+    target = reply.get("target", "")
+    source_chat = source.get("chat_id", "")
+
+    if reply.get("command_id") != command_id:
+        errors.append("reply command_id does not match command record")
+    if reply.get("job_id") != command_id:
+        errors.append("reply job_id must match command_id")
+    if channel != source.get("channel"):
+        errors.append("reply channel does not match command source.channel")
+    if target != delivery.get("target"):
+        errors.append("reply target does not match command delivery.target")
+    if target != source_chat:
+        errors.append("reply target does not match original source.chat_id")
+    if delivery.get("reply") == "none":
+        errors.append("command delivery.reply is none")
+    if source.get("trusted") is not True:
+        errors.append("original command source was not trusted")
+    if channel == "test" and not allow_test:
+        errors.append("test-channel delivery requires --allow-test")
+    if channel == "telegram" and not target:
+        errors.append("telegram delivery target is empty")
+    if channel not in {"telegram", "test"}:
+        errors.append(f"sender guard does not support channel {channel!r} yet")
+    if not inside_repo(str(reply.get("result_path", ""))):
+        errors.append("reply result_path is missing or escapes the repo")
+    return errors
+
+
+def message_payload(reply: dict[str, Any]) -> dict[str, str]:
+    return {
+        "action": "send",
+        "target": str(reply["target"]),
+        "message": str(reply["text"]),
+    }
+
+
+def write_delivery_marker(reply_path: Path, reply: dict[str, Any], message_id: str) -> Path:
+    marker = {
+        "version": "0.4.2",
+        "noted_by": "Theo",
+        "created_at": utc_now(),
+        "command_id": reply["command_id"],
+        "reply_path": rel(reply_path),
+        "channel": reply["channel"],
+        "target": reply["target"],
+        "status": "sent",
+        "delivered_by": "openclaw.message",
+        "message_id": message_id,
+    }
+    out = reply_path.parent / "sent.json"
+    write_json(out, marker)
+    errors = validator_errors(DELIVERY_SCHEMA, out)
+    if errors:
+        raise RuntimeError("delivery marker schema invalid: " + "; ".join(errors))
+    return out
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Validate and emit a Mouth reply delivery payload.")
+    parser.add_argument("reply", help="Path to jobs/outbox/<command_id>/reply.json.")
+    parser.add_argument("--emit-message-json", action="store_true", help="Print the OpenClaw message tool payload.")
+    parser.add_argument("--mark-sent", metavar="MESSAGE_ID", help="Record sent.json after OpenClaw reports a message id.")
+    parser.add_argument("--sent-path", action="store_true", help="Print sent.json path after --mark-sent.")
+    parser.add_argument("--allow-test", action="store_true", help="Allow test-channel replies for fixtures.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    reply_path = Path(args.reply).expanduser().resolve()
+    if not reply_path.exists():
+        return fail(f"reply not found: {reply_path}")
+    try:
+        reply_path.relative_to(REPO_ROOT)
+    except ValueError:
+        return fail(f"reply must live under repo root: {reply_path}")
+
+    errors = validator_errors(REPLY_SCHEMA, reply_path)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    reply = load_json(reply_path)
+    if not isinstance(reply, dict):
+        return fail("reply JSON must be an object")
+
+    command_path, command = command_for(reply)
+    if command is None:
+        return fail(f"command record not found or invalid: {command_path}", 3)
+    semantic = semantic_errors(reply, command, args.allow_test)
+    if semantic:
+        for error in semantic:
+            print(f"blocked: {error}", file=sys.stderr)
+        return 3
+
+    if args.emit_message_json:
+        print(json.dumps(message_payload(reply), indent=2, sort_keys=True))
+    elif not args.mark_sent:
+        print(f"ready: {reply['channel']} -> {reply['target']} ({rel(reply_path)})")
+
+    if args.mark_sent:
+        try:
+            sent_path = write_delivery_marker(reply_path, reply, args.mark_sent)
+        except RuntimeError as exc:
+            return fail(str(exc), 4)
+        if args.sent_path:
+            print(f"sent: {rel(sent_path)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

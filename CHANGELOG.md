@@ -15,9 +15,13 @@ Noted by Theo - 2026-06-09
   from local allowlists, emits Mouth command envelopes, and calls `bin/mouth`.
 - `schemas/reply.schema.json` and `jobs/outbox/<command_id>/reply.json` provide
   a durable outbound receipt payload for the OpenClaw runtime to send.
+- `schemas/delivery.schema.json` and `bin/mouth-send-reply` validate outbound
+  replies against their original trusted command before OpenClaw sends them,
+  then record `jobs/outbox/<command_id>/sent.json` after delivery.
 - Glass now renders read-only Mouth queue/operator state from
   `jobs/inbox/*/mouth.json` plus outbound reply records from
-  `jobs/outbox/*/reply.json`.
+  `jobs/outbox/*/reply.json` and delivery markers from
+  `jobs/outbox/*/sent.json`.
 - Shot 3 Hands dispatch rails: `budget.max_minutes` adapter timeout with
   SIGTERM/SIGKILL escalation, per-lane write lockfiles in `runs/locks/`, stale
   lock recovery, and `RUN_DIR/blocked.log` JSONL denied-action evidence.

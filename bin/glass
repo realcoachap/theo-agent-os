@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.4.0 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.4.2 - Noted by Theo - 2026-06-10.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -408,6 +408,15 @@ def mouth_replies() -> list[dict[str, object]]:
         if isinstance(data, dict):
             row = dict(data)
             row["record_path"] = rel(path)
+            sent_path = path.parent / "sent.json"
+            if sent_path.exists():
+                try:
+                    sent = read_json(sent_path)
+                except Exception:
+                    sent = {}
+                if isinstance(sent, dict):
+                    row["delivery"] = sent
+                    row["delivery_path"] = rel(sent_path)
             records.append(row)
     return records
 
@@ -688,8 +697,10 @@ function renderMouth() {
   const replies = (appState.mouth_replies || []).map(r => `<article class="card">
     <div class="row"><div class="title mono">reply ${esc(short(r.command_id))}</div><span class="pill ${r.ok ? "success" : "failed"}">${r.ok ? "ok" : "error"}</span></div>
     <div class="subtle">${esc(r.channel)} / target ${esc(r.target)} / exit ${esc(r.exit_code)}</div>
+    <div class="subtle">delivery ${(r.delivery || {}).status ? `<span class="pill success">${esc((r.delivery || {}).status)}</span> message ${esc((r.delivery || {}).message_id || "")}` : `<span class="pill blocked">pending</span>`}</div>
     <pre>${esc(r.text || "")}</pre>
     ${r.result_path ? `<div class="mono subtle">result ${esc(r.result_path)}</div>` : ""}
+    ${r.delivery_path ? `<div class="mono subtle">delivery ${esc(r.delivery_path)}</div>` : ""}
     <div class="subtle">${esc(r.record_path || "")}</div>
   </article>`).join("");
   return `<section class="stack">

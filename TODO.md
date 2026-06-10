@@ -92,4 +92,6 @@ Noted by Theo - 2026-06-09
 - [x] Wire the external OpenClaw/Telegram wrapper to call `bin/mouth`.
 - [x] Add schema-valid `jobs/outbox/<command_id>/reply.json` payloads for
   OpenClaw Telegram delivery.
+- [x] Add guarded runtime sender payload emission plus post-send
+  `jobs/outbox/<command_id>/sent.json` delivery markers.
 - [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

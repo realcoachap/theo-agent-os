@@ -67,6 +67,8 @@ Irreversible actions require approval before execution.
 - `schemas/reply.schema.json` is the active Shot 4 outbound receipt contract.
   Runtime delivery should read `jobs/outbox/*/reply.json` instead of scraping
   terminal output.
+- `schemas/delivery.schema.json` is the active Shot 4 post-send marker
+  contract for `jobs/outbox/*/sent.json`.
 - `registry/workers.json` is the only worker manifest.
 - `env_profile` maps adapter env var -> `$CALLER_ENV_VAR`. Dispatch must block
   when a referenced caller variable is missing.
@@ -102,6 +104,10 @@ Irreversible actions require approval before execution.
 - `bin/mouth-openclaw --write-reply` may write `jobs/outbox/<command_id>/reply.json`.
   This is a delivery payload only; it must not trigger Telegram delivery from
   inside the repo.
+- `bin/mouth-send-reply` is the reviewed runtime sender guard. It validates
+  `reply.json`, checks it against the original trusted command record, emits a
+  narrow OpenClaw message payload, and writes `sent.json` only after OpenClaw
+  returns a message id.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.

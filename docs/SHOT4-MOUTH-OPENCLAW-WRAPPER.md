@@ -53,6 +53,20 @@ jobs/outbox/<command_id>/reply.json
 The OpenClaw runtime should send that payload to Telegram. The repo does not
 store Telegram secrets and does not deliver messages by itself.
 
+Before sending, the runtime should validate the payload with:
+
+```bash
+bin/mouth-send-reply jobs/outbox/<command_id>/reply.json --emit-message-json
+```
+
+After the Telegram connector returns a message id, record the delivery marker:
+
+```bash
+bin/mouth-send-reply jobs/outbox/<command_id>/reply.json \
+  --mark-sent <telegram-message-id> \
+  --sent-path
+```
+
 ## Direct Chat Mode
 
 Direct Telegram chats can skip the `/theo` prefix if the caller explicitly uses

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/delivery.schema.json",
+  "title": "Theo Agent OS Operator Delivery Marker",
+  "description": "Theo Agent OS v0.4.2 - Noted by Theo - 2026-06-10. Post-send marker written after OpenClaw confirms an outbound operator reply was delivered.",
+  "type": "object",
+  "required": ["version", "noted_by", "created_at", "command_id", "reply_path", "channel", "target", "status", "delivered_by", "message_id"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "string"},
+    "noted_by": {"type": "string"},
+    "created_at": {"type": "string", "minLength": 1},
+    "command_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "reply_path": {"type": "string", "minLength": 1},
+    "channel": {"type": "string", "enum": ["telegram", "openclaw", "cli", "test"]},
+    "target": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["sent"]},
+    "delivered_by": {"type": "string", "minLength": 1},
+    "message_id": {"type": "string", "minLength": 1}
+  }
+}

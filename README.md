@@ -267,6 +267,24 @@ When `--write-reply` is set, the wrapper also writes
 `schemas/reply.schema.json`. The OpenClaw runtime can send that payload to
 Telegram without scraping terminal text.
 
+Before sending, route the payload through the sender guard:
+
+```bash
+bin/mouth-send-reply jobs/outbox/<command_id>/reply.json --emit-message-json
+```
+
+After OpenClaw sends the emitted payload and returns a message id, record the
+delivery marker:
+
+```bash
+bin/mouth-send-reply jobs/outbox/<command_id>/reply.json \
+  --mark-sent <telegram-message-id> \
+  --sent-path
+```
+
+That writes `jobs/outbox/<command_id>/sent.json`, validated by
+`schemas/delivery.schema.json`, and Glass shows the reply as sent.
+
 `execution.mode=draft` compiles only. `dispatch_selftest` sets
 `THEO_ADAPTER_SELFTEST=1` and spends no model tokens. `dispatch_real` requires
 the command's spend approval and the worker's existing `THEO_ENABLE_REAL_*`
