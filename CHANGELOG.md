@@ -9,6 +9,9 @@ Noted by Theo - 2026-06-09
 - Shot 4 hardening regression script:
   `tests/shot4_hardening_regression.py` proves explicit test-channel trust,
   sender-guard forgery/untrusted blocking, and admin login throttling.
+- Fable's Shot 4.2/4.3 QA PASS + Mission Control chat UI scout artifact,
+  preserving the Mattermost primary / Zulip runner-up recommendation and the
+  follow-up closure commit for non-blocking hardening items.
 - Shot 4 Mouth intake: `schemas/command.schema.json`, `bin/mouth`, and
   `jobs/examples/mouth-shot4-selftest.json` compile trusted phone/OpenClaw
   commands into canonical `job.json` envelopes, optionally dispatch them

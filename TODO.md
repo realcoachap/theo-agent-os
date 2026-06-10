@@ -98,5 +98,7 @@ Noted by Theo - 2026-06-09
   explicit secrets.
 - [x] Close Clawd Shot 4 hardening carry-overs: explicit test-channel trust
   fixture gate, admin login throttling, and sender-guard regression tests.
+- [x] Preserve Fable's Shot 4.2/4.3 PASS + chat UI scout artifact in
+  `docs/FABLE-SHOT4-QA-PASS-CHATUI.md`.
 - [ ] Design live-state sync/actions for the authenticated Railway admin door.
-- [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.
+- [x] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.
