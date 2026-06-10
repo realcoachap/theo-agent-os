@@ -14,32 +14,34 @@ Noted by Theo - 2026-06-09
 - Add first spec folder for Pass 2 product feel.
 - Define decisions/tasks format.
 
-## Phase 2 - Graphify Wrapper
+## Phase 2 - Foundry
 
-- Build `run-graphify-query.sh`.
+- Build dispatch, receipt, and validate scripts.
+- Build `adapters/graphify.sh`.
 - Require graph freshness against `HEAD`.
-- Emit result envelope.
+- Emit and validate result envelopes under `runs/`.
 
-## Phase 3 - Unified Runner
+## Phase 3 - Glass
 
-- Build `run-agent-job.sh`.
-- Dispatch only installed/proven workers.
-- Write `runs/<date>/<job_id>/result.json`.
+- Build localhost-only Mission Control viewer.
+- Render runs, artifacts, specs, memory proposals, workers, and security.
+- Keep it read-only except proposal queue and manual security checklist.
 
-## Phase 4 - Claude/Codex/Aider/Grok
+## Phase 4 - Hands
 
 - Claude lane uses Claude Agent SDK hooks if practical.
 - Codex lane handles implementation/tests.
 - Aider handles narrow patches.
 - Grok handles alternate/research lanes.
+- Every write lane works in a git worktree.
+- No merges, no pushes, no direct memory writes.
 
-## Phase 5 - Mission Control Viewer
+## Phase 5 - Mouth
 
-- Render run results.
-- Render artifacts.
-- Show memory proposals.
-- Show worker manifests.
-- Show security warnings.
+- Add OpenClaw operator skill after hardening is green.
+- Convert human intent into job envelopes.
+- Require explicit confirmation for write/delete/spend/publish/push.
+- Schedule read-only morning brief via OpenClaw native cron.
 
 ## Phase 6 - Sandboxed Experiments
 
@@ -49,4 +51,3 @@ Noted by Theo - 2026-06-09
 - Antigravity CLI
 - LiteLLM
 - Odysseus UI ideas
-

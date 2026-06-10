@@ -35,6 +35,7 @@ The order is:
 ```text
 AGENTS.md
 docs/
+  FABLE-ONESHOT-PACK-RECONCILIATION.md
   FULL-BREAKDOWN.md
   HERMES-SANDBOX.md
   ROADMAP.md
@@ -77,3 +78,13 @@ scripts/agent-cli/run-graphify-query.sh
 It should accept a job envelope, read a repo graph, emit a result envelope, and
 refuse if the graph trails `HEAD`.
 
+## Fable Prompt Pack
+
+Fable's one-shot pack is reconciled in:
+
+```text
+docs/FABLE-ONESHOT-PACK-RECONCILIATION.md
+```
+
+Important correction: Fable said `coach-agent-os`, but this repo is the
+canonical target. Do not create a duplicate repo unless Coach explicitly asks.
