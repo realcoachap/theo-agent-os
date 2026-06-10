@@ -19,6 +19,9 @@ Noted by Theo - 2026-06-09
   `security/checklist.json`.
 - Fable's scoped Shot 3 RISK review, including the realpath/symlink trapdoor,
   `blocked.log` contract, lane-lock, timeout, and write-run QA gates.
+- Fable's full Shot 3 Hands QA RISK artifact for commit `88503e6`, preserving
+  the live-execution evidence and the diff-capture defect that `e2c28e8`
+  superseded.
 
 ### Fixed
 
