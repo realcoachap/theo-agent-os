@@ -96,5 +96,7 @@ Noted by Theo - 2026-06-09
   `jobs/outbox/<command_id>/sent.json` delivery markers.
 - [x] Add Railway single-operator admin login mode, disabled by default behind
   explicit secrets.
+- [x] Close Clawd Shot 4 hardening carry-overs: explicit test-channel trust
+  fixture gate, admin login throttling, and sender-guard regression tests.
 - [ ] Design live-state sync/actions for the authenticated Railway admin door.
 - [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

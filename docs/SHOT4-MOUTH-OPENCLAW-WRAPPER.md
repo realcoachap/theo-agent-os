@@ -1,4 +1,4 @@
-# Shot 4 Mouth OpenClaw Wrapper v0.1.0
+# Shot 4 Mouth OpenClaw Wrapper v0.1.1
 
 Noted by Theo - 2026-06-10
 
@@ -26,6 +26,10 @@ or the matching CLI flags:
 ```
 
 The event can claim whatever it wants; the wrapper recomputes trust locally.
+
+`source.channel="test"` is not trusted by default. Fixture-only tests must pass
+`--allow-test-trust` or set `THEO_ALLOW_TEST_TRUST=1`; live Telegram wiring
+should not use either.
 
 ## Safe Selftest
 

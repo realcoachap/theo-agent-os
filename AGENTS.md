@@ -101,6 +101,8 @@ Irreversible actions require approval before execution.
 - `bin/mouth-openclaw` is the reviewed OpenClaw/Telegram wrapper. It must
   recompute trust from local allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` and
   must never trust event-provided metadata alone.
+- `bin/mouth-openclaw` must not auto-trust `source.channel="test"`. Test
+  fixtures require `--allow-test-trust` or `THEO_ALLOW_TEST_TRUST=1`.
 - `bin/mouth-openclaw --write-reply` may write `jobs/outbox/<command_id>/reply.json`.
   This is a delivery payload only; it must not trigger Telegram delivery from
   inside the repo.
@@ -138,3 +140,6 @@ Irreversible actions require approval before execution.
   `THEO_GLASS_REMOTE_ADMIN=1`, admin credentials, and a session secret. It may
   expose reviewed Glass writes after login, but still must not expose shell,
   raw dispatch, pushes, OpenClaw proxying, or the Control UI link.
+- Railway `--remote-admin` login must throttle repeated failures. The current
+  in-process limiter is enough for the single-operator stage; use a durable
+  shared limiter before multi-instance or broader team admin mode.

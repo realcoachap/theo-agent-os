@@ -6,6 +6,9 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Shot 4 hardening regression script:
+  `tests/shot4_hardening_regression.py` proves explicit test-channel trust,
+  sender-guard forgery/untrusted blocking, and admin login throttling.
 - Shot 4 Mouth intake: `schemas/command.schema.json`, `bin/mouth`, and
   `jobs/examples/mouth-shot4-selftest.json` compile trusted phone/OpenClaw
   commands into canonical `job.json` envelopes, optionally dispatch them
@@ -48,6 +51,10 @@ Noted by Theo - 2026-06-09
 
 ### Fixed
 
+- `bin/mouth-openclaw` no longer auto-trusts `channel=test` events; fixtures
+  must opt in with `--allow-test-trust` or `THEO_ALLOW_TEST_TRUST=1`.
+- `bin/glass --remote-admin` now throttles repeated bad login attempts per
+  client and returns `429` with `Retry-After`.
 - Refuse Railway remote-review mode when real non-demo run history is present
   unless the operator explicitly acknowledges public exposure.
 - Include untracked files and symlinks in write-run `diff.patch` artifacts

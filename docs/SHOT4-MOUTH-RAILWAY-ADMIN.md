@@ -1,4 +1,4 @@
-# Shot 4 Railway Admin Door v0.1.0
+# Shot 4 Railway Admin Door v0.1.1
 
 Noted by Theo - 2026-06-10
 
@@ -21,6 +21,8 @@ THEO_GLASS_REMOTE_ADMIN=1
 THEO_GLASS_ADMIN_USER=coach
 THEO_GLASS_ADMIN_PASSWORD_HASH=<pbkdf2 hash>
 THEO_GLASS_ADMIN_SESSION_SECRET=<long random secret>
+THEO_GLASS_ADMIN_LOGIN_MAX_FAILURES=5
+THEO_GLASS_ADMIN_LOGIN_WINDOW_SECONDS=300
 ```
 
 Generate the password hash locally:
@@ -41,6 +43,9 @@ environment-variable UI or CLI.
 - Unauthenticated admin requests see the login page only; `/api/state` returns
   `401`.
 - Login uses a signed `HttpOnly`, `Secure`, `SameSite=Lax` session cookie.
+- Repeated failed login attempts are throttled per client with `429` and
+  `Retry-After`. This is in-process by design for the single-operator Railway
+  stage.
 - Admin writes still require the existing `X-Theo-Glass: 1` header and same-host
   origin checks.
 - The Control UI link remains hidden on Railway.
@@ -55,7 +60,8 @@ environment-variable UI or CLI.
 3. Bad login returns `401`.
 4. Good login sets a session cookie and `/api/state` reports
    `mode=railway-admin`, `writes_enabled=true`.
-5. Logout clears the session cookie.
+5. Repeated bad logins return `429` after the configured failure threshold.
+6. Logout clears the session cookie.
 
 The next layer after this is live-state sync/action design, not broadening the
 admin door.

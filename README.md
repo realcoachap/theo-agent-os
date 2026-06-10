@@ -260,7 +260,9 @@ THEO_TRUSTED_TELEGRAM_IDS=1000000000 \
 ```
 
 `bin/mouth-openclaw` recomputes trust from local allowlists; it does not trust
-inbound event metadata by itself.
+inbound event metadata by itself. `channel=test` fixture events are untrusted
+unless the caller explicitly passes `--allow-test-trust` or sets
+`THEO_ALLOW_TEST_TRUST=1`.
 
 When `--write-reply` is set, the wrapper also writes
 `jobs/outbox/<command_id>/reply.json`, validated by

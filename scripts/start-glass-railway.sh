@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Theo Agent OS Glass Railway start v0.4.3 - Noted by Theo - 2026-06-10.
+# Theo Agent OS Glass Railway start v0.4.4 - Noted by Theo - 2026-06-10.
 # Runs the public review surface read-only by default; admin mode is env-gated.
 
 set -euo pipefail
