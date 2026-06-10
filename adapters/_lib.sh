@@ -226,6 +226,7 @@ import os
 import subprocess
 import sys
 import time
+from difflib import unified_diff
 from pathlib import Path
 
 status, summary = sys.argv[1:3]
@@ -249,6 +250,59 @@ def rel(path: Path) -> str:
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
+def git_quote(path_text: str) -> str:
+    return path_text.replace("\\", "\\\\").replace('"', '\\"')
+
+def untracked_patch() -> str:
+    """Render untracked files without following symlinks into hidden git state."""
+    proc = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return ""
+    chunks: list[str] = []
+    for raw_name in proc.stdout.split(b"\0"):
+        if not raw_name:
+            continue
+        rel_name = raw_name.decode("utf-8", errors="surrogateescape")
+        path = root / rel_name
+        quoted = git_quote(rel_name)
+        if path.is_symlink():
+            target = os.readlink(path)
+            chunks.append(
+                f"diff --git a/{quoted} b/{quoted}\n"
+                "new file mode 120000\n"
+                "--- /dev/null\n"
+                f"+++ b/{quoted}\n"
+                "@@ -0,0 +1 @@\n"
+                f"+{target}\n"
+                "\\ No newline at end of file\n"
+            )
+            continue
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if b"\0" in data[:8192]:
+            chunks.append(
+                f"diff --git a/{quoted} b/{quoted}\n"
+                "new file mode 100644\n"
+                f"Binary files /dev/null and b/{quoted} differ\n"
+            )
+            continue
+        text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines(keepends=True)
+        chunks.append(
+            f"diff --git a/{quoted} b/{quoted}\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            f"+++ b/{quoted}\n"
+            + "".join(unified_diff([], lines, fromfile="/dev/null", tofile=f"b/{rel_name}", lineterm=""))
+        )
+    return "\n".join(chunks)
+
 branch_proc = run(["git", "branch", "--show-current"])
 branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
 head_proc = run(["git", "rev-parse", "HEAD"])
@@ -264,8 +318,17 @@ for line in status_lines:
         path_text = path_text.split(" -> ", 1)[1]
     files_touched.append(path_text)
 
+diff_parts: list[str] = []
 diff_proc = run(["git", "diff", "--no-ext-diff", "--binary", "--"])
-diff_text = diff_proc.stdout if diff_proc.returncode == 0 else ""
+if diff_proc.returncode == 0 and diff_proc.stdout.strip():
+    diff_parts.append(diff_proc.stdout)
+cached_diff_proc = run(["git", "diff", "--cached", "--no-ext-diff", "--binary", "--"])
+if cached_diff_proc.returncode == 0 and cached_diff_proc.stdout.strip():
+    diff_parts.append(cached_diff_proc.stdout)
+untracked_diff = untracked_patch()
+if untracked_diff.strip():
+    diff_parts.append(untracked_diff)
+diff_text = "\n".join(part.rstrip() for part in diff_parts)
 diff_path = run_dir / "diff.patch"
 if diff_text.strip():
     diff_path.write_text(diff_text, encoding="utf-8")

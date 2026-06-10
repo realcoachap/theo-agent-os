@@ -24,6 +24,8 @@ Noted by Theo - 2026-06-09
 
 - Refuse Railway remote-review mode when real non-demo run history is present
   unless the operator explicitly acknowledges public exposure.
+- Include untracked files and symlinks in write-run `diff.patch` artifacts
+  instead of relying on `git diff` alone.
 - Render receipt undo commands with the actual dispatch-created worktree path
   instead of a placeholder.
 - Let `bin/operator-status` write a degraded status snapshot when the
