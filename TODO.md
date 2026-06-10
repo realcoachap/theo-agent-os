@@ -35,3 +35,15 @@ Noted by Theo - 2026-06-09
 - [x] Add `security/checklist.json` manual attestation surface.
 - [x] Verify UI, write lanes, bind refusal, and artifact blocking.
 - [x] Commit and push.
+
+## 2026-06-10 Task: Shot 3 Hands Preflight
+
+- [x] Preserve Fable's Shot 3 forecast/advice in `docs/FABLE-SHOT3-PREFLIGHT.md`.
+- [ ] Enforce adapter execution timeout from `budget.max_minutes`.
+- [ ] Add lane lockfile for write jobs with stale-lock detection.
+- [ ] Hard-block `.git*` writes inside worktrees.
+- [ ] Prove hook/path denial with relative and absolute path forms.
+- [ ] Keep Aider `adapter_pending` unless credentials are available through
+  `$VAR` env indirection.
+- [ ] Verify env acceptance tests A/B/C before claiming Shot 3 complete.
+- [ ] Render first write-run diff artifact in Glass.

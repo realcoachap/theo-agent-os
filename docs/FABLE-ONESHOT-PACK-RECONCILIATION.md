@@ -181,6 +181,10 @@ Tasks:
 - Carry the three env acceptance tests from Fable v0.1.2 into Shot 3:
   successful `claude-glm` dry-run resolution, missing `$THEO_GLM_*` blocked
   result, and stripped stray caller `ANTHROPIC_*` values for plain `claude`.
+- Add the Shot 3 preflight gates from `docs/FABLE-SHOT3-PREFLIGHT.md` before
+  launching real write adapters: adapter timeout from `budget.max_minutes`, lane
+  lockfile for write jobs, hard `.git*` worktree trapdoor denial, hook tests for
+  relative/absolute paths, and honest Aider credential handling.
 
 ### Shot 4 - Mouth
 

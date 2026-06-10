@@ -34,6 +34,9 @@ Noted by Theo - 2026-06-09
 - Aider handles narrow patches.
 - Grok handles alternate/research lanes.
 - Every write lane works in a git worktree.
+- Dispatch enforces `budget.max_minutes` for adapter execution.
+- Write lanes take a lane lockfile so two writers never touch one repo at once.
+- Worktree hooks hard-block `.git*` paths, including the gitfile trapdoor.
 - No merges, no pushes, no direct memory writes.
 
 ## Phase 5 - Mouth
