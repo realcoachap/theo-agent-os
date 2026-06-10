@@ -34,4 +34,4 @@ Noted by Theo - 2026-06-09
 - [x] Add credential-stripped `bin/operator-status`.
 - [x] Add `security/checklist.json` manual attestation surface.
 - [x] Verify UI, write lanes, bind refusal, and artifact blocking.
-- [ ] Commit and push.
+- [x] Commit and push.
