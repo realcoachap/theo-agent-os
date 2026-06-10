@@ -14,7 +14,7 @@ Noted by Theo - 2026-06-09
 - Add first spec folder for Pass 2 product feel.
 - Define decisions/tasks format.
 
-## Phase 2 - Foundry
+## Phase 2 - Foundry - complete in Shot 1
 
 - Build dispatch, receipt, and validate scripts.
 - Build `adapters/graphify.sh`.

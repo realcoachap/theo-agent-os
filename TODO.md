@@ -9,4 +9,4 @@ Noted by Theo - 2026-06-09
 - [x] Build read-only Graphify adapter.
 - [x] Add examples, run layout, and graph hook.
 - [x] Verify positive and negative paths.
-- [ ] Commit and push.
+- [x] Commit and push.
