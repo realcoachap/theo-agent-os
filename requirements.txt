@@ -1,0 +1,2 @@
+# Theo Agent OS Glass Railway runtime v0.2.2 - Noted by Theo - 2026-06-10.
+# Standard-library-only Python app; this file lets Railway/Nixpacks detect Python.
