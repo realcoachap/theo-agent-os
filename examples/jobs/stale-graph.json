@@ -1,0 +1,20 @@
+{
+  "job_id": "33333333-3333-4333-8333-333333333333",
+  "lane": "self",
+  "intent": "map",
+  "worker": "graphify",
+  "model_profile": "default",
+  "task": "summary",
+  "context": {
+    "graph": "jobs/examples/stale-graph/graphify-out/graph.json"
+  },
+  "permissions": {
+    "tier": "read_only",
+    "write": [],
+    "deny": [".env*", "secrets/**"],
+    "network": false,
+    "git_push": false
+  },
+  "verify": {"tests": null, "lint": false},
+  "budget": {"max_minutes": 10, "max_tokens": 20000}
+}

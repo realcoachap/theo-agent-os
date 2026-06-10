@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Theo Agent OS Graphify post-commit hook v0.1.0 - Noted by Theo - 2026-06-09
+# Rebuilds an AST-only Graphify cache and stamps it with the current HEAD.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+if ! command -v graphify >/dev/null 2>&1; then
+  echo "graphify missing; skipping graph update" >&2
+  exit 0
+fi
+
+graphify update "$repo" >/tmp/theo-agent-os-graphify-hook.log 2>&1 || {
+  cat /tmp/theo-agent-os-graphify-hook.log >&2 || true
+  exit 0
+}
+mkdir -p "$repo/graphify-out"
+git -C "$repo" rev-parse HEAD > "$repo/graphify-out/.head"

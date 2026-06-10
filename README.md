@@ -39,11 +39,26 @@ docs/
   FULL-BREAKDOWN.md
   HERMES-SANDBOX.md
   ROADMAP.md
+bin/
+  dispatch
+  receipt
+  validate
+adapters/
+  graphify.sh
+  _template.sh
+hooks/
+  post-commit
 schemas/
+  job.schema.json
+  result.schema.json
   job-envelope.schema.json
   result-envelope.schema.json
-worker-registry/
+registry/
   workers.json
+jobs/
+  examples/
+runs/
+  .gitkeep
 scripts/
   install-hermes-sandbox.sh
 ```
@@ -69,14 +84,17 @@ email, vault, social, or production tools.
 
 ## First Build Target
 
-The first real implementation target is the Graphify wrapper:
+The first implementation target is now live: Shot 1 Foundry.
 
-```text
-scripts/agent-cli/run-graphify-query.sh
+Use:
+
+```bash
+bin/dispatch jobs/examples/map-self.json
+bin/receipt runs/<date>/<job_id>/result.json
 ```
 
-It should accept a job envelope, read a repo graph, emit a result envelope, and
-refuse if the graph trails `HEAD`.
+`adapters/graphify.sh` builds a run-local Graphify graph from a temporary copy,
+so target repos are not mutated by read-only map jobs.
 
 ## Fable Prompt Pack
 

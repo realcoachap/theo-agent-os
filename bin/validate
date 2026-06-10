@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Theo Agent OS validator v0.1.0 - Noted by Theo - 2026-06-09.
+
+Small stdlib-only JSON Schema subset validator for Foundry envelopes.
+It intentionally supports only the schema keywords this repo uses.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def type_ok(value: Any, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return (isinstance(value, int) or isinstance(value, float)) and not isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return True
+
+
+def validate_node(value: Any, schema: dict[str, Any], path: str = "$") -> list[str]:
+    errors: list[str] = []
+    expected_type = schema.get("type")
+    if expected_type:
+        allowed = expected_type if isinstance(expected_type, list) else [expected_type]
+        if not any(type_ok(value, item) for item in allowed):
+            errors.append(f"{path}: expected type {'|'.join(allowed)}, got {type(value).__name__}")
+            return errors
+
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{path}: expected one of {schema['enum']!r}, got {value!r}")
+
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            errors.append(f"{path}: string shorter than {schema['minLength']}")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            errors.append(f"{path}: string longer than {schema['maxLength']}")
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            errors.append(f"{path}: string does not match pattern {schema['pattern']!r}")
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            errors.append(f"{path}: value below minimum {schema['minimum']}")
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        for key in required:
+            if key not in value:
+                errors.append(f"{path}.{key}: missing required property")
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            for key in value:
+                if key not in properties:
+                    errors.append(f"{path}.{key}: additional property not allowed")
+        for key, child in properties.items():
+            if key in value:
+                errors.extend(validate_node(value[key], child, f"{path}.{key}"))
+
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            errors.extend(validate_node(item, schema["items"], f"{path}[{index}]"))
+
+    return errors
+
+
+def infer_schema(path: Path) -> Path | None:
+    name = path.name
+    if name.endswith(".schema.json"):
+        return None
+    text = name.lower()
+    if "job" in text:
+        return REPO_ROOT / "schemas" / "job.schema.json"
+    if "result" in text:
+        return REPO_ROOT / "schemas" / "result.schema.json"
+    return None
+
+
+def main() -> int:
+    args = [Path(arg) for arg in sys.argv[1:]]
+    if not args:
+        print("usage: bin/validate <schema> <json> [json...] OR bin/validate <json> [json...]")
+        return 2
+
+    if len(args) >= 2 and args[0].name.endswith(".schema.json"):
+        schema_path = args[0]
+        targets = args[1:]
+    else:
+        schema_path = infer_schema(args[0])
+        targets = args
+
+    try:
+        if schema_path is None:
+            for target in targets:
+                load_json(target)
+                print(f"ok: {target}")
+            return 0
+        schema = load_json(schema_path)
+    except Exception as exc:
+        print(f"schema load failed: {exc}", file=sys.stderr)
+        return 2
+
+    exit_code = 0
+    for target in targets:
+        try:
+            data = load_json(target)
+        except Exception as exc:
+            print(f"{target}: json load failed: {exc}", file=sys.stderr)
+            exit_code = 2
+            continue
+        errors = validate_node(data, schema)
+        if errors:
+            print(f"{target}: invalid", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            exit_code = 2
+        else:
+            print(f"ok: {target}")
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

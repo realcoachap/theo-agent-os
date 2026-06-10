@@ -74,9 +74,9 @@ This repo already has:
 - `README.md`
 - `docs/FULL-BREAKDOWN.md`
 - `docs/HERMES-SANDBOX.md`
-- `schemas/job-envelope.schema.json`
-- `schemas/result-envelope.schema.json`
-- `worker-registry/workers.json`
+- `schemas/job.schema.json`
+- `schemas/result.schema.json`
+- `registry/workers.json`
 - Hermes sandbox install and verification
 
 Shot 1 should evolve these instead of replacing them blindly.
@@ -165,4 +165,3 @@ Do Shot 0 in `ascending-one` or Shot 1 in `theo-agent-os`.
 
 My recommendation: Shot 1 first if the goal is Agent OS infrastructure; Shot 0
 first if the goal is improving Ascending Pass 2 immediately.
-

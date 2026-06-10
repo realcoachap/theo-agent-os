@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Theo Agent OS receipt v0.1.0 - Noted by Theo - 2026-06-09.
+
+Render a result envelope into the short text Coach should see in Telegram.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: bin/receipt <runs/.../result.json>", file=sys.stderr)
+        return 2
+    result_path = Path(sys.argv[1])
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    tests = result.get("tests", {})
+    git = result.get("git", {})
+    artifacts = result.get("artifacts", [])
+    proposals = result.get("memory_proposals", [])
+    branch = git.get("branch", "")
+
+    lines = [
+        f"STATUS: {result.get('status', 'unknown')} / {result.get('state', 'unknown')}",
+        f"summary: {result.get('summary', '')}",
+        f"tests: ran={tests.get('ran', False)} passed={tests.get('passed', 0)} failed={tests.get('failed', 0)}",
+        f"branch: {branch or '(none)'} dirty={git.get('dirty', False)}",
+        f"files_touched: {len(result.get('files_touched', []))}",
+    ]
+    for artifact in artifacts[:8]:
+        lines.append(f"artifact: {artifact.get('title', 'untitled')} -> {artifact.get('path', '')}")
+    for proposal in proposals[:5]:
+        lines.append(f"PROPOSED: {proposal}")
+    if branch.startswith("agent/"):
+        lines.append(f"undo: git worktree remove <path> && git branch -D {branch}")
+    lines.append(f"result: {result_path}")
+    print("\n".join(lines[:20]))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

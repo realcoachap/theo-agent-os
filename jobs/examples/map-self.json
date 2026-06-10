@@ -1,0 +1,18 @@
+{
+  "job_id": "11111111-1111-4111-8111-111111111111",
+  "lane": "self",
+  "intent": "map",
+  "worker": "graphify",
+  "model_profile": "default",
+  "task": "summary",
+  "context": {},
+  "permissions": {
+    "tier": "read_only",
+    "write": [],
+    "deny": [".env*", "secrets/**"],
+    "network": false,
+    "git_push": false
+  },
+  "verify": {"tests": null, "lint": false},
+  "budget": {"max_minutes": 10, "max_tokens": 20000}
+}

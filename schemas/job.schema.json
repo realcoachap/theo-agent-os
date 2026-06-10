@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/job-envelope.schema.json",
+  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/job.schema.json",
   "title": "Theo Agent OS Job Envelope",
   "description": "Theo Agent OS v0.1.0 - Noted by Theo - 2026-06-09. Input contract for routed worker jobs.",
   "type": "object",

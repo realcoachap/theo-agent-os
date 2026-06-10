@@ -58,3 +58,12 @@ proposed -> approved -> running -> review -> shipped | killed
 
 Irreversible actions require approval before execution.
 
+## Foundry Contract
+
+- `schemas/job.schema.json` and `schemas/result.schema.json` are the active
+  Shot 1 contracts.
+- `registry/workers.json` is the only worker manifest.
+- `runs/` is append-only generated history; never edit past result envelopes.
+- Adapters stay thin. They may emit `memory_proposals`, but never write memory.
+- Read-only adapters must not mutate target repos. Use run-local or temporary
+  scratch space for generated analysis artifacts.

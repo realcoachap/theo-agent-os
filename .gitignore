@@ -6,10 +6,17 @@
 !.env.example
 
 .sandbox/
-runs/
+runs/*
+!runs/.gitkeep
+graphify-out/
+!jobs/examples/stale-graph/graphify-out/
+!jobs/examples/stale-graph/graphify-out/.head
+!jobs/examples/stale-graph/graphify-out/graph.json
+.worktrees/
 node_modules/
 .next/
 dist/
 coverage/
 *.log
-
+__pycache__/
+*.pyc

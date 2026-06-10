@@ -8,24 +8,42 @@
       "kind": "cli",
       "binary": "graphify",
       "status": "installed",
-      "strengths": ["repo-map", "blast-radius", "read-only-context"],
+      "strengths": ["repo-map", "blast-radius"],
       "permission_ceiling": "read_only",
-      "cost_tier": "local"
+      "cost_tier": "free"
     },
     {
       "name": "claude",
       "kind": "cli",
       "binary": "claude",
       "status": "installed",
-      "strengths": ["architecture", "specs", "long-context-review", "deep-builds"],
+      "protocols": ["anthropic"],
+      "model_profiles": ["default"],
+      "strengths": ["build", "refactor", "review"],
       "permission_ceiling": "write_sandboxed",
-      "cost_tier": "subscription"
+      "cost_tier": "high"
+    },
+    {
+      "name": "claude-glm",
+      "kind": "cli",
+      "binary": "claude",
+      "status": "adapter_pending",
+      "protocols": ["anthropic"],
+      "env_profile": {
+        "ANTHROPIC_BASE_URL": "required_from_calling_environment",
+        "ANTHROPIC_API_KEY": "required_from_calling_environment"
+      },
+      "model_profiles": ["glm-5.1"],
+      "strengths": ["bulk-implementation", "cheap-iteration"],
+      "permission_ceiling": "write_sandboxed",
+      "cost_tier": "low"
     },
     {
       "name": "codex",
       "kind": "cli",
       "binary": "codex",
-      "status": "installed",
+      "status": "adapter_pending",
+      "adapter_pending": true,
       "strengths": ["repo-edits", "tests", "code-review", "commits"],
       "permission_ceiling": "write_sandboxed",
       "cost_tier": "subscription"
@@ -34,7 +52,8 @@
       "name": "aider",
       "kind": "cli",
       "binary": "aider",
-      "status": "installed",
+      "status": "adapter_pending",
+      "adapter_pending": true,
       "strengths": ["surgical-patches", "known-file-edits"],
       "permission_ceiling": "write_sandboxed",
       "cost_tier": "model-dependent"
@@ -43,7 +62,8 @@
       "name": "grok",
       "kind": "cli",
       "binary": "grok",
-      "status": "installed",
+      "status": "adapter_pending",
+      "adapter_pending": true,
       "strengths": ["alternate-reasoning", "research", "creative-divergence"],
       "permission_ceiling": "read_only",
       "cost_tier": "subscription"

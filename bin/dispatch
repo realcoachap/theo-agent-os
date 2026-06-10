@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Foundry dispatcher v0.1.0 - Noted by Theo - 2026-06-09.
+
+Routes one job envelope to one thin adapter, writes an append-only run record,
+and enforces the early gates before any worker sees the task.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_JOB = REPO_ROOT / "schemas" / "job.schema.json"
+SCHEMA_RESULT = REPO_ROOT / "schemas" / "result.schema.json"
+REGISTRY = REPO_ROOT / "registry" / "workers.json"
+RUNS = REPO_ROOT / "runs"
+TIER_ORDER = {"read_only": 0, "write_sandboxed": 1, "write_trusted": 2}
+STATUS_EXIT = {"success": 0, "partial": 5, "blocked": 3, "failed": 4}
+
+
+def run(cmd: list[str], cwd: Path | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def validator_errors(schema: Path, target: Path) -> list[str]:
+    proc = run([str(REPO_ROOT / "bin" / "validate"), str(schema), str(target)])
+    if proc.returncode == 0:
+        return []
+    return [line.strip() for line in (proc.stderr or proc.stdout).splitlines() if line.strip()]
+
+
+def fail(message: str, code: int = 2) -> int:
+    print(message, file=sys.stderr)
+    return code
+
+
+def registry_map() -> dict[str, dict[str, Any]]:
+    data = load_json(REGISTRY)
+    return {worker["name"]: worker for worker in data.get("workers", [])}
+
+
+def lane_path(lane: str) -> Path:
+    if lane == "self":
+        return REPO_ROOT
+    return Path(lane).expanduser().resolve()
+
+
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def ensure_context_path(base: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        candidate = (base / path).resolve()
+        if candidate.exists():
+            return candidate
+        return (REPO_ROOT / path).resolve()
+    return path.resolve()
+
+
+def semantically_validate(job: dict[str, Any], worker: dict[str, Any], lane: Path) -> list[str]:
+    errors: list[str] = []
+    tier = job["permissions"]["tier"]
+    ceiling = worker.get("permission_ceiling", "read_only")
+    if TIER_ORDER[tier] > TIER_ORDER.get(ceiling, 0):
+        errors.append(f"permission tier {tier} exceeds worker ceiling {ceiling}")
+    if job["permissions"].get("git_push") is not False:
+        errors.append("permissions.git_push must be false")
+    if not lane.exists() or not lane.is_dir():
+        errors.append(f"lane path does not exist: {lane}")
+    if tier != "read_only":
+        context = job.get("context", {})
+        for key in ("graph", "spec", "blast_radius"):
+            if not context.get(key):
+                errors.append(f"context.{key} is required for write jobs")
+        if context.get("agents_md") is not True:
+            errors.append("context.agents_md must be true for write jobs")
+        if context.get("graph"):
+            graph = ensure_context_path(lane, context["graph"])
+            if not graph.exists():
+                errors.append(f"context.graph does not exist: {graph}")
+        if context.get("spec"):
+            spec = ensure_context_path(lane, context["spec"])
+            if not spec.exists():
+                errors.append(f"context.spec does not exist: {spec}")
+    return errors
+
+
+def graph_is_stale(graph: Path, lane: Path) -> tuple[bool, str]:
+    head_proc = run(["git", "rev-parse", "HEAD"], cwd=lane)
+    if head_proc.returncode != 0:
+        return False, "lane is not a git repo; staleness gate skipped"
+    current_head = head_proc.stdout.strip()
+    head_file = graph.parent / ".head"
+    if head_file.exists():
+        recorded = head_file.read_text(encoding="utf-8").strip()
+        if recorded != current_head:
+            return True, f"graph .head {recorded or '(empty)'} does not match HEAD {current_head}"
+        return False, "graph .head matches HEAD"
+    graph_mtime = int(graph.stat().st_mtime)
+    commit_time_proc = run(["git", "log", "-1", "--format=%ct"], cwd=lane)
+    if commit_time_proc.returncode == 0:
+        commit_time = int(commit_time_proc.stdout.strip())
+        if graph_mtime < commit_time:
+            return True, "graph mtime is older than last commit and no .head stamp exists"
+    return False, "graph has no .head; mtime fallback accepted"
+
+
+def new_run(job: dict[str, Any]) -> Path:
+    today = datetime.now().strftime("%Y-%m-%d")
+    run_dir = RUNS / today / job["job_id"]
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def write_result(run_dir: Path, result: dict[str, Any]) -> Path:
+    result_path = run_dir / "result.json"
+    result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return result_path
+
+
+def append_index(run_dir: Path, job: dict[str, Any], result: dict[str, Any], started: float) -> None:
+    RUNS.mkdir(exist_ok=True)
+    entry = {
+        "job_id": job["job_id"],
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "lane": job["lane"],
+        "worker": job["worker"],
+        "status": result["status"],
+        "state": result["state"],
+        "run_dir": rel(run_dir),
+        "created_at": datetime.fromtimestamp(started).isoformat(timespec="seconds"),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "summary": result["summary"],
+    }
+    with (RUNS / "index.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def base_result(job: dict[str, Any], status: str, summary: str, run_dir: Path) -> dict[str, Any]:
+    branch_proc = run(["git", "branch", "--show-current"], cwd=lane_path(job["lane"]))
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    return {
+        "job_id": job["job_id"],
+        "status": status,
+        "state": "review" if status in {"success", "partial", "blocked", "failed"} else "running",
+        "summary": summary,
+        "diff": None,
+        "files_touched": [],
+        "tests": {"ran": False, "passed": 0, "failed": 0},
+        "git": {"branch": branch, "dirty": False, "commits": []},
+        "transcript": rel(run_dir / "transcript.md"),
+        "artifacts": [],
+        "memory_proposals": [],
+        "followups": [],
+        "cost": {"tokens": 0, "minutes": 0},
+    }
+
+
+def install_hook(repo: Path) -> int:
+    repo = repo.expanduser().resolve()
+    git_dir_proc = run(["git", "rev-parse", "--git-dir"], cwd=repo)
+    if git_dir_proc.returncode != 0:
+        return fail(f"not a git repo: {repo}")
+    git_dir = (repo / git_dir_proc.stdout.strip()).resolve()
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    target = hooks_dir / "post-commit"
+    shutil.copy2(REPO_ROOT / "hooks" / "post-commit", target)
+    target.chmod(0o755)
+    print(f"installed hook: {target}")
+    return 0
+
+
+def maybe_worktree(job: dict[str, Any], lane: Path) -> Path | None:
+    if job["permissions"]["tier"] == "read_only":
+        return None
+    worktree = lane / ".worktrees" / job["job_id"]
+    branch = f"agent/{job['job_id']}"
+    worktree.parent.mkdir(exist_ok=True)
+    proc = run(["git", "worktree", "add", "-b", branch, str(worktree), "HEAD"], cwd=lane)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
+    return worktree
+
+
+def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--install-hook":
+        return install_hook(Path(sys.argv[2]))
+    if len(sys.argv) != 2:
+        print("usage: bin/dispatch <job.json> OR bin/dispatch --install-hook <repo-path>", file=sys.stderr)
+        return 2
+
+    job_path = Path(sys.argv[1]).expanduser().resolve()
+    if not job_path.exists():
+        return fail(f"job not found: {job_path}")
+    errors = validator_errors(SCHEMA_JOB, job_path)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    job = load_json(job_path)
+    if job.get("model_profile") is None:
+        job["model_profile"] = "default"
+    workers = registry_map()
+    if job["worker"] == "auto":
+        if job["intent"] in {"map", "review", "research"} and job["permissions"]["tier"] == "read_only":
+            job["worker"] = "graphify"
+        else:
+            return fail("auto worker can only resolve read_only map/review/research jobs in Shot 1")
+    if job["worker"] not in workers:
+        return fail(f"unknown worker: {job['worker']}")
+    worker = workers[job["worker"]]
+    lane = lane_path(job["lane"])
+    semantic_errors = semantically_validate(job, worker, lane)
+    if semantic_errors:
+        for error in semantic_errors:
+            print(f"semantic error: {error}", file=sys.stderr)
+        return 2
+
+    started = time.time()
+    run_dir = new_run(job)
+    (run_dir / "job.json").write_text(json.dumps(job, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (run_dir / "meta.json").write_text(json.dumps({"started_at": datetime.now().isoformat(timespec="seconds"), "repo": str(REPO_ROOT)}, indent=2) + "\n", encoding="utf-8")
+
+    graph_value = job.get("context", {}).get("graph")
+    if graph_value:
+        graph = ensure_context_path(lane, graph_value)
+        stale, reason = graph_is_stale(graph, lane)
+        if stale:
+            result = base_result(job, "blocked", f"Graph freshness gate blocked this job: {reason}.", run_dir)
+            result["transcript"] = rel(run_dir / "transcript.md")
+            (run_dir / "transcript.md").write_text(reason + "\n", encoding="utf-8")
+            result_path = write_result(run_dir, result)
+            append_index(run_dir, job, result, started)
+            print(result_path)
+            return 3
+
+    adapter = REPO_ROOT / "adapters" / f"{job['worker']}.sh"
+    if not adapter.exists():
+        result = base_result(job, "blocked", f"Adapter is not implemented for worker {job['worker']}.", run_dir)
+        result_path = write_result(run_dir, result)
+        append_index(run_dir, job, result, started)
+        print(result_path)
+        return 3
+
+    try:
+        worktree = maybe_worktree(job, lane)
+    except RuntimeError as exc:
+        result = base_result(job, "blocked", f"Could not create worktree: {exc}", run_dir)
+        result_path = write_result(run_dir, result)
+        append_index(run_dir, job, result, started)
+        print(result_path)
+        return 3
+
+    env = os.environ.copy()
+    env.update({
+        "JOB_PATH": str(run_dir / "job.json"),
+        "RUN_DIR": str(run_dir),
+        "RUN_DIR_REL": rel(run_dir),
+        "LANE_PATH": str(lane),
+        "WORKTREE": str(worktree or ""),
+        "REPO_ROOT": str(REPO_ROOT),
+        "WORKER_NAME": job["worker"],
+        "STARTED_EPOCH": str(started),
+    })
+    for key in worker.get("env_profile", {}):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    proc = subprocess.run([str(adapter)], cwd=lane, text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    (run_dir / "adapter.stdout.log").write_text(proc.stdout, encoding="utf-8")
+    (run_dir / "adapter.stderr.log").write_text(proc.stderr, encoding="utf-8")
+    result_path = run_dir / "result.json"
+    if not result_path.exists():
+        result = base_result(job, "failed", f"Adapter {job['worker']} did not write result.json.", run_dir)
+        result["transcript"] = rel(run_dir / "adapter.stderr.log")
+        write_result(run_dir, result)
+    result_errors = validator_errors(SCHEMA_RESULT, result_path)
+    if result_errors:
+        bad = result_path.read_text(encoding="utf-8") if result_path.exists() else ""
+        (run_dir / "invalid-result.json").write_text(bad, encoding="utf-8")
+        result = base_result(job, "failed", "Adapter wrote an invalid result envelope; see invalid-result.json.", run_dir)
+        result["transcript"] = rel(run_dir / "adapter.stderr.log")
+        write_result(run_dir, result)
+    result = load_json(result_path)
+    append_index(run_dir, job, result, started)
+    print(result_path)
+    return STATUS_EXIT.get(result["status"], 4)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
