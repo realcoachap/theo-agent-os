@@ -62,6 +62,7 @@ hooks/
 schemas/
   command.schema.json
   job.schema.json
+  reply.schema.json
   result.schema.json
 registry/
   pinned-version.txt
@@ -69,6 +70,7 @@ registry/
 jobs/
   examples/
   inbox/
+  outbox/
 runs/
   .gitkeep
 security/
@@ -252,11 +254,18 @@ THEO_TRUSTED_TELEGRAM_IDS=1000000000 \
   --event jobs/examples/openclaw-telegram-event.json \
   --selftest-fixture \
   --dispatch \
-  --receipt
+  --receipt \
+  --write-reply \
+  --reply-path
 ```
 
 `bin/mouth-openclaw` recomputes trust from local allowlists; it does not trust
 inbound event metadata by itself.
+
+When `--write-reply` is set, the wrapper also writes
+`jobs/outbox/<command_id>/reply.json`, validated by
+`schemas/reply.schema.json`. The OpenClaw runtime can send that payload to
+Telegram without scraping terminal text.
 
 `execution.mode=draft` compiles only. `dispatch_selftest` sets
 `THEO_ADAPTER_SELFTEST=1` and spends no model tokens. `dispatch_real` requires

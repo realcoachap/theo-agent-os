@@ -64,6 +64,9 @@ Irreversible actions require approval before execution.
   Shot 1 contracts.
 - `schemas/command.schema.json` is the active Shot 4 phone/OpenClaw intake
   contract. Mouth commands compile into jobs; they do not replace jobs.
+- `schemas/reply.schema.json` is the active Shot 4 outbound receipt contract.
+  Runtime delivery should read `jobs/outbox/*/reply.json` instead of scraping
+  terminal output.
 - `registry/workers.json` is the only worker manifest.
 - `env_profile` maps adapter env var -> `$CALLER_ENV_VAR`. Dispatch must block
   when a referenced caller variable is missing.
@@ -96,6 +99,9 @@ Irreversible actions require approval before execution.
 - `bin/mouth-openclaw` is the reviewed OpenClaw/Telegram wrapper. It must
   recompute trust from local allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` and
   must never trust event-provided metadata alone.
+- `bin/mouth-openclaw --write-reply` may write `jobs/outbox/<command_id>/reply.json`.
+  This is a delivery payload only; it must not trigger Telegram delivery from
+  inside the repo.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.

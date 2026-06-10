@@ -90,4 +90,6 @@ Noted by Theo - 2026-06-09
 - [x] Reuse `bin/receipt` for operator reply text.
 - [x] Add Glass read-only Mouth queue/operator state.
 - [x] Wire the external OpenClaw/Telegram wrapper to call `bin/mouth`.
+- [x] Add schema-valid `jobs/outbox/<command_id>/reply.json` payloads for
+  OpenClaw Telegram delivery.
 - [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

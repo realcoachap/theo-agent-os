@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/reply.schema.json",
+  "title": "Theo Agent OS Operator Reply Envelope",
+  "description": "Theo Agent OS v0.4.1 - Noted by Theo - 2026-06-10. Outbound receipt payload for OpenClaw/Telegram delivery after Mouth dispatch.",
+  "type": "object",
+  "required": ["version", "noted_by", "created_at", "command_id", "job_id", "channel", "target", "ok", "exit_code", "result_path", "text"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "string"},
+    "noted_by": {"type": "string"},
+    "created_at": {"type": "string", "minLength": 1},
+    "command_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "channel": {"type": "string", "enum": ["telegram", "openclaw", "cli", "test"]},
+    "target": {"type": "string"},
+    "ok": {"type": "boolean"},
+    "exit_code": {"type": "integer"},
+    "result_path": {"type": "string"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 3500}
+  }
+}

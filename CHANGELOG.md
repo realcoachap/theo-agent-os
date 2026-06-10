@@ -13,8 +13,11 @@ Noted by Theo - 2026-06-09
   chat-to-shell lane.
 - `bin/mouth-openclaw` wraps Telegram/OpenClaw event JSON, recomputes trust
   from local allowlists, emits Mouth command envelopes, and calls `bin/mouth`.
+- `schemas/reply.schema.json` and `jobs/outbox/<command_id>/reply.json` provide
+  a durable outbound receipt payload for the OpenClaw runtime to send.
 - Glass now renders read-only Mouth queue/operator state from
-  `jobs/inbox/*/mouth.json`.
+  `jobs/inbox/*/mouth.json` plus outbound reply records from
+  `jobs/outbox/*/reply.json`.
 - Shot 3 Hands dispatch rails: `budget.max_minutes` adapter timeout with
   SIGTERM/SIGKILL escalation, per-lane write lockfiles in `runs/locks/`, stale
   lock recovery, and `RUN_DIR/blocked.log` JSONL denied-action evidence.

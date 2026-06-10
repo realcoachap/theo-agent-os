@@ -22,8 +22,10 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
 DEFAULT_PREFIXES = ("/theo", "theo:", "theo")
 DEFAULT_DENY = [".env*", "secrets/**"]
+OUTBOX = REPO_ROOT / "jobs" / "outbox"
 
 
 def utc_now() -> str:
@@ -192,6 +194,69 @@ def build_command(event: dict[str, Any], args: argparse.Namespace) -> dict[str, 
     }
 
 
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def extract_result_path(text: str) -> str:
+    for line in text.splitlines():
+        if line.startswith("result: "):
+            value = line.split("result: ", 1)[1].strip()
+            path = Path(value)
+            if path.is_absolute():
+                return rel(path)
+            return value
+    return ""
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def validator_errors(schema: Path, target: Path) -> list[str]:
+    proc = subprocess.run(
+        [str(REPO_ROOT / "bin" / "validate"), str(schema), str(target)],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode == 0:
+        return []
+    return [line.strip() for line in (proc.stderr or proc.stdout).splitlines() if line.strip()]
+
+
+def write_reply(command: dict[str, Any], rc: int, stdout: str, stderr: str) -> Path:
+    command_id = command["command_id"]
+    result_path = extract_result_path(stdout)
+    body = stdout.strip() if stdout.strip() else stderr.strip()
+    if not body:
+        body = "Mouth command finished without receipt output."
+    reply = {
+        "version": "0.4.1",
+        "noted_by": "Theo",
+        "created_at": utc_now(),
+        "command_id": command_id,
+        "job_id": command_id,
+        "channel": command["source"]["channel"],
+        "target": command.get("delivery", {}).get("target", ""),
+        "ok": rc == 0,
+        "exit_code": rc,
+        "result_path": result_path,
+        "text": body[:3500],
+    }
+    out = OUTBOX / command_id / "reply.json"
+    write_json(out, reply)
+    errors = validator_errors(REPLY_SCHEMA, out)
+    if errors:
+        raise RuntimeError("reply schema invalid: " + "; ".join(errors))
+    return out
+
+
 def call_mouth(command: dict[str, Any], args: argparse.Namespace) -> int:
     with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="theo-mouth-openclaw-", delete=False) as handle:
         json.dump(command, handle, indent=2, sort_keys=True)
@@ -206,10 +271,19 @@ def call_mouth(command: dict[str, Any], args: argparse.Namespace) -> int:
         cmd.append("--json")
     cmd.append(str(command_path))
     proc = subprocess.run(cmd, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    reply_path = None
+    if args.write_reply:
+        try:
+            reply_path = write_reply(command, proc.returncode, proc.stdout, proc.stderr)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 4
     if proc.stdout:
         print(proc.stdout.rstrip())
     if proc.stderr:
         print(proc.stderr.rstrip(), file=sys.stderr)
+    if reply_path and args.reply_path:
+        print(f"reply: {rel(reply_path)}")
     return proc.returncode
 
 
@@ -225,6 +299,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dispatch", action="store_true", help="Ask bin/mouth to dispatch after compiling.")
     parser.add_argument("--json", action="store_true", help="Print Mouth JSON output.")
     parser.add_argument("--receipt", action="store_true", help="Print receipt text after dispatch.")
+    parser.add_argument("--write-reply", action="store_true", help="Write jobs/outbox/<command_id>/reply.json for the runtime to send.")
+    parser.add_argument("--reply-path", action="store_true", help="Print the reply.json path after writing it.")
     parser.add_argument("--selftest-fixture", action="store_true", help="Use the Shot 4 no-spend fixture policy.")
     parser.add_argument("--lane", default="self")
     parser.add_argument("--intent", choices=["build", "patch", "research", "review", "map", "content", "propose"], default="patch")

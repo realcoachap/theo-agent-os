@@ -35,12 +35,23 @@ THEO_TRUSTED_TELEGRAM_IDS=1000000000 \
   --event jobs/examples/openclaw-telegram-event.json \
   --selftest-fixture \
   --dispatch \
-  --receipt
+  --receipt \
+  --write-reply \
+  --reply-path
 ```
 
 That path compiles a `command.schema.json` envelope, calls `bin/mouth`, sets
 `THEO_ADAPTER_SELFTEST=1`, dispatches through the existing Claude selftest
 adapter, and prints the normal `bin/receipt` output. It spends no model tokens.
+
+With `--write-reply`, it also writes a schema-valid delivery payload:
+
+```text
+jobs/outbox/<command_id>/reply.json
+```
+
+The OpenClaw runtime should send that payload to Telegram. The repo does not
+store Telegram secrets and does not deliver messages by itself.
 
 ## Direct Chat Mode
 

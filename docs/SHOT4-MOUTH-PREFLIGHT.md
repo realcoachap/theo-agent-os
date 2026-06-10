@@ -26,6 +26,9 @@ hidden spend path, or a new source of truth for receipts.
   receipt format.
 - `bin/mouth-openclaw` recomputes Telegram/OpenClaw trust from local allowlists
   and refuses to treat inbound event metadata as self-authenticating.
+- `bin/mouth-openclaw --write-reply` writes a schema-valid outbound receipt
+  payload to `jobs/outbox/<command_id>/reply.json`; message delivery remains an
+  OpenClaw runtime responsibility, not a repo-side secret path.
 - Glass may show Mouth queue/operator state, but Glass still must not dispatch,
   retry, kill, push, proxy OpenClaw, or iframe Control UI.
 
@@ -37,7 +40,8 @@ hidden spend path, or a new source of truth for receipts.
 4. Dispatch a selftest write command through the existing Claude adapter with
    `THEO_ADAPTER_SELFTEST=1`.
 5. Route a synthetic Telegram/OpenClaw event through `bin/mouth-openclaw`.
-6. Render the receipt and expose the Mouth record in Glass state.
+6. Write and validate a `reply.schema.json` outbox payload.
+7. Render the receipt, Mouth record, and reply record in Glass state.
 
 ## Carry-Overs
 
