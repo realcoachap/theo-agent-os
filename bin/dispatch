@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Foundry dispatcher v0.1.3 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Foundry dispatcher v0.3.0 - Noted by Theo - 2026-06-10.
 
 Routes one job envelope to one thin adapter, writes an append-only run record,
 and enforces the early gates before any worker sees the task. Exit codes are
 canonical for operator glue: 0 success, 2 validation/semantic rejection before
 a run exists, 3 blocked, 4 failed, and 5 partial.
+
+Shot 3 adds the first write-run safety rails: budget timeouts, per-lane writer
+locks, blocked-action evidence, and enough adapter context to keep worktree
+writes reviewable before any external CLI is allowed to touch source.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +31,12 @@ SCHEMA_JOB = REPO_ROOT / "schemas" / "job.schema.json"
 SCHEMA_RESULT = REPO_ROOT / "schemas" / "result.schema.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
 RUNS = REPO_ROOT / "runs"
+LOCKS = RUNS / "locks"
 TIER_ORDER = {"read_only": 0, "write_sandboxed": 1, "write_trusted": 2}
 STATUS_EXIT = {"success": 0, "partial": 5, "blocked": 3, "failed": 4}
 STRIPPED_CHILD_ENV = {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
+TIMEOUT_GRACE_SECONDS = 5
+DEFAULT_LOCK_STALE_SECONDS = 60 * 60 * 2
 
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -173,9 +182,37 @@ def existing_run(job_id: str) -> Path | None:
 
 
 def write_result(run_dir: Path, result: dict[str, Any]) -> Path:
+    blocked_path = run_dir / "blocked.log"
+    blocked_rel = rel(blocked_path)
+    artifacts = result.setdefault("artifacts", [])
+    if blocked_path.exists() and isinstance(artifacts, list) and not any(
+        isinstance(item, dict) and item.get("path") == blocked_rel for item in artifacts
+    ):
+        artifacts.append({
+            "artifact_type": "data",
+            "title": "Denied action log",
+            "summary": "JSONL rows for blocked writes, commands, locks, or dispatch guards.",
+            "path": blocked_rel,
+            "preview_kind": "text",
+            "worker": "dispatch",
+            "source_job": result.get("job_id", run_dir.name),
+            "safe_to_render": True,
+        })
     result_path = run_dir / "result.json"
     result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result_path
+
+
+def append_blocked_log(run_dir: Path, tool: str, path_or_cmd: str, rule: str) -> None:
+    """Record a denied action in the Shot 3 JSONL evidence contract."""
+    row = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "tool": tool,
+        "path_or_cmd": path_or_cmd,
+        "rule": rule,
+    }
+    with (run_dir / "blocked.log").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def append_index(run_dir: Path, job: dict[str, Any], result: dict[str, Any], started: float) -> None:
@@ -214,6 +251,129 @@ def base_result(job: dict[str, Any], status: str, summary: str, run_dir: Path) -
         "followups": [],
         "cost": {"tokens": 0, "minutes": 0},
     }
+
+
+def is_write_job(job: dict[str, Any]) -> bool:
+    return job["permissions"]["tier"] != "read_only"
+
+
+def lock_stale_seconds(job: dict[str, Any]) -> int:
+    override = os.environ.get("THEO_LOCK_STALE_SECONDS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            return DEFAULT_LOCK_STALE_SECONDS
+    budget_seconds = int(job.get("budget", {}).get("max_minutes", 1)) * 60
+    return max(DEFAULT_LOCK_STALE_SECONDS, budget_seconds + TIMEOUT_GRACE_SECONDS + 60)
+
+
+def lane_lock_path(lane: Path) -> Path:
+    key = sha256(str(lane.resolve()).encode("utf-8")).hexdigest()[:24]
+    return LOCKS / f"{key}.lock"
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def read_lock(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def stale_lock_reason(path: Path, job: dict[str, Any]) -> str | None:
+    data = read_lock(path)
+    pid = data.get("pid")
+    ts = data.get("ts")
+    if not isinstance(pid, int):
+        return "lock file has no integer pid"
+    if not pid_alive(pid):
+        return f"lock owner pid {pid} is not alive"
+    if isinstance(ts, (int, float)) and time.time() - float(ts) > lock_stale_seconds(job):
+        return f"lock age exceeded {lock_stale_seconds(job)} seconds"
+    return None
+
+
+def acquire_lane_lock(job: dict[str, Any], lane: Path, run_dir: Path) -> tuple[Path | None, str | None]:
+    """Atomically acquire the single-writer lock for a write lane."""
+    LOCKS.mkdir(parents=True, exist_ok=True)
+    path = lane_lock_path(lane)
+    payload = {
+        "pid": os.getpid(),
+        "job_id": job["job_id"],
+        "ts": time.time(),
+        "lane": str(lane),
+        "run_dir": rel(run_dir),
+    }
+    while True:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            reason = stale_lock_reason(path, job)
+            if reason:
+                append_blocked_log(run_dir, "dispatch", rel(path), f"stale_lane_lock_recovered: {reason}")
+                path.unlink(missing_ok=True)
+                continue
+            data = read_lock(path)
+            holder = data.get("job_id", "unknown")
+            return None, f"Lane lock is held by active job {holder}; refusing concurrent write dispatch."
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        return path, None
+
+
+def release_lane_lock(path: Path | None, job_id: str) -> None:
+    if not path:
+        return
+    data = read_lock(path)
+    if data.get("job_id") == job_id and data.get("pid") == os.getpid():
+        path.unlink(missing_ok=True)
+
+
+def budget_seconds(job: dict[str, Any]) -> int:
+    return max(1, int(job["budget"]["max_minutes"])) * 60
+
+
+def run_adapter(adapter: Path, cwd: Path, env: dict[str, str], timeout: int) -> tuple[subprocess.CompletedProcess[str], bool]:
+    """Run an adapter with SIGTERM grace before SIGKILL on budget expiry."""
+    proc = subprocess.Popen(
+        [str(adapter)],
+        cwd=cwd,
+        text=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess([str(adapter)], proc.returncode, stdout, stderr), False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=TIMEOUT_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = proc.communicate()
+        return subprocess.CompletedProcess([str(adapter)], -signal.SIGTERM, stdout or "", stderr or ""), True
 
 
 def install_hook(repo: Path) -> int:
@@ -283,7 +443,12 @@ def main() -> int:
     started = time.time()
     run_dir = new_run(job)
     (run_dir / "job.json").write_text(json.dumps(job, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (run_dir / "meta.json").write_text(json.dumps({"started_at": datetime.now().isoformat(timespec="seconds"), "repo": str(REPO_ROOT)}, indent=2) + "\n", encoding="utf-8")
+    (run_dir / "meta.json").write_text(json.dumps({
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "repo": str(REPO_ROOT),
+        "blocked_log": rel(run_dir / "blocked.log"),
+        "timeout_seconds": budget_seconds(job),
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     graph_value = job.get("context", {}).get("graph")
     if graph_value:
@@ -308,13 +473,27 @@ def main() -> int:
         print(result_path)
         return 3
 
-    adapter = REPO_ROOT / "adapters" / f"{job['worker']}.sh"
+    adapter_ref = worker.get("adapter") or f"adapters/{job['worker']}.sh"
+    adapter = (REPO_ROOT / str(adapter_ref)).resolve()
+    if REPO_ROOT not in adapter.parents:
+        return fail(f"adapter path escapes repo root: {adapter_ref}")
     if not adapter.exists():
         result = base_result(job, "blocked", f"Adapter is not implemented for worker {job['worker']}.", run_dir)
         result_path = write_result(run_dir, result)
         append_index(run_dir, job, result, started)
         print(result_path)
         return 3
+
+    lock_path: Path | None = None
+    if is_write_job(job):
+        lock_path, lock_error = acquire_lane_lock(job, lane, run_dir)
+        if lock_error:
+            append_blocked_log(run_dir, "dispatch", str(lane), "lane_lock_active")
+            result = base_result(job, "blocked", lock_error, run_dir)
+            result_path = write_result(run_dir, result)
+            append_index(run_dir, job, result, started)
+            print(result_path)
+            return 3
 
     try:
         worktree = maybe_worktree(job, lane)
@@ -323,6 +502,7 @@ def main() -> int:
         result_path = write_result(run_dir, result)
         append_index(run_dir, job, result, started)
         print(result_path)
+        release_lane_lock(lock_path, job["job_id"])
         return 3
 
     env = child_env_base()
@@ -335,27 +515,42 @@ def main() -> int:
         "REPO_ROOT": str(REPO_ROOT),
         "WORKER_NAME": job["worker"],
         "STARTED_EPOCH": str(started),
+        "THEO_BUDGET_SECONDS": str(budget_seconds(job)),
+        "THEO_BLOCKED_LOG": str(run_dir / "blocked.log"),
     })
     env.update(resolved_env)
-    proc = subprocess.run([str(adapter)], cwd=lane, text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    (run_dir / "adapter.stdout.log").write_text(proc.stdout, encoding="utf-8")
-    (run_dir / "adapter.stderr.log").write_text(proc.stderr, encoding="utf-8")
-    result_path = run_dir / "result.json"
-    if not result_path.exists():
-        result = base_result(job, "failed", f"Adapter {job['worker']} did not write result.json.", run_dir)
-        result["transcript"] = rel(run_dir / "adapter.stderr.log")
-        write_result(run_dir, result)
-    result_errors = validator_errors(SCHEMA_RESULT, result_path)
-    if result_errors:
-        bad = result_path.read_text(encoding="utf-8") if result_path.exists() else ""
-        (run_dir / "invalid-result.json").write_text(bad, encoding="utf-8")
-        result = base_result(job, "failed", "Adapter wrote an invalid result envelope; see invalid-result.json.", run_dir)
-        result["transcript"] = rel(run_dir / "adapter.stderr.log")
-        write_result(run_dir, result)
-    result = load_json(result_path)
-    append_index(run_dir, job, result, started)
-    print(result_path)
-    return STATUS_EXIT.get(result["status"], 4)
+    try:
+        proc, timed_out = run_adapter(adapter, lane, env, budget_seconds(job))
+        (run_dir / "adapter.stdout.log").write_text(proc.stdout, encoding="utf-8")
+        (run_dir / "adapter.stderr.log").write_text(proc.stderr, encoding="utf-8")
+        result_path = run_dir / "result.json"
+        if timed_out:
+            append_blocked_log(run_dir, "dispatch", str(adapter), f"budget.max_minutes timeout after {job['budget']['max_minutes']} minute(s)")
+            result = base_result(
+                job,
+                "failed",
+                f"Adapter {job['worker']} exceeded budget.max_minutes={job['budget']['max_minutes']}; SIGTERM grace was applied before the run was failed.",
+                run_dir,
+            )
+            result["transcript"] = rel(run_dir / "adapter.stderr.log")
+            write_result(run_dir, result)
+        elif not result_path.exists():
+            result = base_result(job, "failed", f"Adapter {job['worker']} did not write result.json.", run_dir)
+            result["transcript"] = rel(run_dir / "adapter.stderr.log")
+            write_result(run_dir, result)
+        result_errors = validator_errors(SCHEMA_RESULT, result_path)
+        if result_errors:
+            bad = result_path.read_text(encoding="utf-8") if result_path.exists() else ""
+            (run_dir / "invalid-result.json").write_text(bad, encoding="utf-8")
+            result = base_result(job, "failed", "Adapter wrote an invalid result envelope; see invalid-result.json.", run_dir)
+            result["transcript"] = rel(run_dir / "adapter.stderr.log")
+            write_result(run_dir, result)
+        result = load_json(result_path)
+        append_index(run_dir, job, result, started)
+        print(result_path)
+        return STATUS_EXIT.get(result["status"], 4)
+    finally:
+        release_lane_lock(lock_path, job["job_id"])
 
 
 if __name__ == "__main__":

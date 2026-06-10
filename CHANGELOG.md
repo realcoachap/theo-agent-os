@@ -6,6 +6,13 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Shot 3 Hands dispatch rails: `budget.max_minutes` adapter timeout with
+  SIGTERM/SIGKILL escalation, per-lane write lockfiles in `runs/locks/`, stale
+  lock recovery, and `RUN_DIR/blocked.log` JSONL denied-action evidence.
+- Shared write adapter library `adapters/_lib.sh` plus Claude/Codex/Aider
+  adapter wrappers. Real CLI execution is explicit-env gated; selftest mode
+  proves worktree writes, denied path logging, git-push blocking, diff
+  artifacts, and raw test-output artifacts without model spend.
 - Shot 2 Glass implementation: localhost-only `bin/glass` run/artifact/spec/
   worker/security viewer, `bin/seed-demo` schema-valid fixtures,
   `bin/operator-status`, `registry/pinned-version.txt`, and
@@ -17,6 +24,8 @@ Noted by Theo - 2026-06-09
 
 - Refuse Railway remote-review mode when real non-demo run history is present
   unless the operator explicitly acknowledges public exposure.
+- Render receipt undo commands with the actual dispatch-created worktree path
+  instead of a placeholder.
 - Let `bin/operator-status` write a degraded status snapshot when the
   OpenClaw CLI is absent instead of crashing before Glass can render.
 - Refuse duplicate `job_id` values cleanly before run creation instead of

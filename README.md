@@ -47,8 +47,14 @@ bin/
   seed-demo
   validate
 adapters/
+  _lib.sh
+  aider.sh
+  claude.sh
+  codex.sh
   graphify.sh
   _template.sh
+fixtures/
+  shot3-write-target.txt
 hooks/
   post-commit
 schemas/
@@ -199,3 +205,23 @@ THEO_GLASS_REMOTE_REVIEW_ACK=public-runs-ok
 
 That acknowledgement is intentionally noisy because real write runs may contain
 repo history, specs, artifacts, and security checklist state.
+
+## Shot 3 Hands
+
+Write-capable workers now pass through dispatch rails before any adapter runs:
+
+- `budget.max_minutes` is enforced around adapter execution.
+- write jobs take a single-lane lock under `runs/locks/`.
+- stale locks are recovered by dead PID or configured age.
+- denied actions append JSONL rows to `RUN_DIR/blocked.log` as
+  `{ts, tool, path_or_cmd, rule}`.
+- adapter path checks resolve real paths before deny matching, so `.git*`
+  writes and symlinks into git state are blocked.
+- raw `verify.tests` output is preserved as a declared artifact when tests run.
+
+Claude has an installed adapter with selftest support. Codex and Aider have the
+same wrapper shape but remain `adapter_pending` for real execution until the
+operator explicitly sets `THEO_ENABLE_REAL_CODEX=1` or
+`THEO_ENABLE_REAL_AIDER=1`. Real Claude execution is likewise gated by
+`THEO_ENABLE_REAL_CLAUDE=1`; selftest mode uses `THEO_ADAPTER_SELFTEST=1` and
+does not spend model tokens.

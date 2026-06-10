@@ -41,17 +41,28 @@ Noted by Theo - 2026-06-09
 - [x] Preserve Fable's Shot 3 forecast/advice in `docs/FABLE-SHOT3-PREFLIGHT.md`.
 - [x] Preserve Fable's scoped Shot 3 RISK review in
   `docs/FABLE-SHOT3-RISK-REVIEW.md`.
-- [ ] Enforce adapter execution timeout from `budget.max_minutes`.
-- [ ] Add lane lockfile for write jobs with stale-lock detection.
-- [ ] Define `blocked.log` as `RUN_DIR/blocked.log` JSONL rows with
+- [x] Enforce adapter execution timeout from `budget.max_minutes`.
+- [x] Add lane lockfile for write jobs with stale-lock detection.
+- [x] Define `blocked.log` as `RUN_DIR/blocked.log` JSONL rows with
   `{ts, tool, path_or_cmd, rule}`.
-- [ ] Hard-block `.git*` writes inside worktrees after resolving real paths.
-- [ ] Prove hook/path denial with relative, absolute, and symlinked path forms.
-- [ ] Decide real-adapter `tests.passed` / `tests.failed` counting and preserve
+- [x] Hard-block `.git*` writes inside worktrees after resolving real paths.
+- [x] Prove hook/path denial with relative, absolute, and symlinked path forms.
+- [x] Decide real-adapter `tests.passed` / `tests.failed` counting and preserve
   raw test output as an artifact.
-- [ ] Ensure receipt undo commands use the actual worktree path.
-- [ ] Keep Aider `adapter_pending` unless credentials are available through
+- [x] Ensure receipt undo commands use the actual worktree path.
+- [x] Keep Aider `adapter_pending` unless credentials are available through
   `$VAR` env indirection.
-- [ ] Verify env acceptance tests A/B/C before claiming Shot 3 complete.
-- [ ] Delta-QA Railway review mode after Glass v0.2.4 demo-only public guard.
-- [ ] Render first write-run diff artifact in Glass.
+- [x] Verify env acceptance tests A/B/C before claiming Shot 3 complete.
+- [x] Delta-QA Railway review mode after Glass v0.2.4 demo-only public guard.
+- [x] Render first write-run diff artifact in Glass.
+
+## 2026-06-10 Task: Shot 3 Hands Implementation
+
+- [x] Build `adapters/_lib.sh` shared write-run guard/result library.
+- [x] Add `adapters/claude.sh`, `adapters/codex.sh`, and `adapters/aider.sh`.
+- [x] Keep real CLI execution opt-in with `THEO_ENABLE_REAL_*` environment
+  switches while selftests prove the dispatch/adapter boundary without spend.
+- [x] Run timeout, lane-lock, stale-lock, path-denial, env, receipt, and Glass
+  write-run evidence checks.
+- [x] Commit, push, deploy Glass if needed, and hand Fable a pinned commit plus
+  a named selftest run directory.

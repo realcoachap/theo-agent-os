@@ -1,0 +1,2 @@
+Shot 3 write-adapter selftests edit this tracked fixture only inside
+dispatch-created worktrees. The source copy should remain unchanged on main.

@@ -82,6 +82,10 @@ Irreversible actions require approval before execution.
 - Worktree deny checks must resolve real paths before matching. `.git*` and
   symlink paths into shared `.git` state are always blocked, even if a job has
   write permission for ordinary source files.
+- Real write-capable Claude/Codex/Aider CLI execution must be explicitly
+  enabled by the matching `THEO_ENABLE_REAL_*` environment switch. Selftest
+  mode may prove dispatch, worktree, denial, diff, and receipt behavior without
+  spending model tokens.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.

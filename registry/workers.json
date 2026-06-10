@@ -1,7 +1,7 @@
 {
-  "version": "0.1.0",
+  "version": "0.3.0",
   "noted_by": "Theo",
-  "date": "2026-06-09",
+  "date": "2026-06-10",
   "workers": [
     {
       "name": "graphify",
@@ -17,6 +17,9 @@
       "kind": "cli",
       "binary": "claude",
       "status": "installed",
+      "adapter": "adapters/claude.sh",
+      "adapter_selftest": true,
+      "enable_env": "THEO_ENABLE_REAL_CLAUDE",
       "protocols": ["anthropic"],
       "model_profiles": ["default"],
       "strengths": ["build", "refactor", "review"],
@@ -28,6 +31,8 @@
       "kind": "cli",
       "binary": "claude",
       "status": "adapter_pending",
+      "adapter": "adapters/claude.sh",
+      "adapter_selftest": true,
       "protocols": ["anthropic"],
       "env_profile": {
         "ANTHROPIC_BASE_URL": "$THEO_GLM_BASE_URL",
@@ -44,6 +49,9 @@
       "binary": "codex",
       "status": "adapter_pending",
       "adapter_pending": true,
+      "adapter": "adapters/codex.sh",
+      "adapter_selftest": true,
+      "enable_env": "THEO_ENABLE_REAL_CODEX",
       "strengths": ["repo-edits", "tests", "code-review", "commits"],
       "permission_ceiling": "write_sandboxed",
       "cost_tier": "subscription"
@@ -54,6 +62,9 @@
       "binary": "aider",
       "status": "adapter_pending",
       "adapter_pending": true,
+      "adapter": "adapters/aider.sh",
+      "adapter_selftest": true,
+      "enable_env": "THEO_ENABLE_REAL_AIDER",
       "strengths": ["surgical-patches", "known-file-edits"],
       "permission_ceiling": "write_sandboxed",
       "cost_tier": "model-dependent"

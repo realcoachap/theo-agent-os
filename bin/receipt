@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS receipt v0.1.1 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS receipt v0.3.0 - Noted by Theo - 2026-06-10.
 
 Render a result envelope into the short text Coach should see in Telegram.
 """
@@ -13,6 +13,13 @@ from pathlib import Path
 
 
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def lane_path(value: str) -> Path:
+    if value == "self":
+        return REPO_ROOT
+    return Path(value).expanduser().resolve()
 
 
 def main() -> int:
@@ -21,6 +28,8 @@ def main() -> int:
         return 2
     result_path = Path(sys.argv[1])
     result = json.loads(result_path.read_text(encoding="utf-8"))
+    job_path = result_path.parent / "job.json"
+    job = json.loads(job_path.read_text(encoding="utf-8")) if job_path.exists() else {}
     tests = result.get("tests", {})
     git = result.get("git", {})
     artifacts = result.get("artifacts", [])
@@ -39,7 +48,9 @@ def main() -> int:
     for proposal in proposals[:5]:
         lines.append(f"PROPOSED: {proposal}")
     if branch.startswith("agent/"):
-        lines.append(f"undo: git worktree remove <path> && git branch -D {branch}")
+        lane = lane_path(str(job.get("lane", "self")))
+        worktree = lane / ".worktrees" / str(result.get("job_id", result_path.parent.name))
+        lines.append(f"undo: git worktree remove {worktree} && git branch -D {branch}")
     lines.append(f"result: {result_path}")
     print("\n".join(lines[:20]))
     return 0
