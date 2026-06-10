@@ -106,3 +106,11 @@ docs/FABLE-ONESHOT-PACK-RECONCILIATION.md
 
 Important correction: Fable said `coach-agent-os`, but this repo is the
 canonical target. Do not create a duplicate repo unless Coach explicitly asks.
+
+Fable's delivered Shot 1 ZIP is reviewed in:
+
+```text
+docs/FABLE-SHOT1-ZIP-REVIEW.md
+```
+
+Verdict: useful reference, not a replacement for this repo's Shot 1.

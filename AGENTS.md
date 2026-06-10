@@ -67,3 +67,6 @@ Irreversible actions require approval before execution.
 - Adapters stay thin. They may emit `memory_proposals`, but never write memory.
 - Read-only adapters must not mutate target repos. Use run-local or temporary
   scratch space for generated analysis artifacts.
+- Before commits that touch adapters, worker registry, env plumbing, or model
+  configuration, run a key-string guard such as:
+  `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
