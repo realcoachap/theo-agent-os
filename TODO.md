@@ -20,3 +20,9 @@ Noted by Theo - 2026-06-09
 - [x] Add labeled Graphify stub mode.
 - [x] Remove duplicate schema aliases and example directory.
 - [x] Verify and push.
+
+## 2026-06-10 Task: Shot 1.x Duplicate Guard
+
+- [x] Reject duplicate `job_id` before run creation.
+- [x] Suppress `bin/receipt` BrokenPipe noise when piped.
+- [ ] Verify and push.

@@ -117,6 +117,9 @@ caller `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` from child environments by
 default; a worker only receives those names if its own `env_profile` explicitly
 sets them.
 
+`job_id` values are single-use. Redispatching an existing id exits `2` before
+creating or changing run state; mint a new UUID for every job attempt.
+
 Graphify has a labeled demo mode for machines without the CLI:
 
 ```bash

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Foundry dispatcher v0.1.2 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Foundry dispatcher v0.1.3 - Noted by Theo - 2026-06-10.
 
 Routes one job envelope to one thin adapter, writes an append-only run record,
 and enforces the early gates before any worker sees the task. Exit codes are
@@ -159,6 +159,19 @@ def new_run(job: dict[str, Any]) -> Path:
     return run_dir
 
 
+def existing_run(job_id: str) -> Path | None:
+    """Job ids are append-only identities; one id may only create one run."""
+    if not RUNS.exists():
+        return None
+    for date_dir in sorted(RUNS.iterdir()):
+        if not date_dir.is_dir():
+            continue
+        candidate = date_dir / job_id
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def write_result(run_dir: Path, result: dict[str, Any]) -> Path:
     result_path = run_dir / "result.json"
     result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -258,6 +271,9 @@ def main() -> int:
         return fail(f"unknown worker: {job['worker']}")
     worker = workers[job["worker"]]
     lane = lane_path(job["lane"])
+    duplicate = existing_run(job["job_id"])
+    if duplicate:
+        return fail(f"job_id already has a run under {rel(duplicate)}; job_ids are single-use, mint a new one", 2)
     semantic_errors = semantically_validate(job, worker, lane)
     if semantic_errors:
         for error in semantic_errors:

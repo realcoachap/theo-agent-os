@@ -70,6 +70,8 @@ Irreversible actions require approval before execution.
 - Dispatch exit codes are canonical: `0` success, `2` validation/semantic
   rejection, `3` blocked, `4` failed, `5` partial.
 - `runs/` is append-only generated history; never edit past result envelopes.
+- `job_id` values are single-use identities. A duplicate dispatch must fail
+  before creating or modifying run state.
 - Adapters stay thin. They may emit `memory_proposals`, but never write memory.
 - Read-only adapters must not mutate target repos. Use run-local or temporary
   scratch space for generated analysis artifacts.

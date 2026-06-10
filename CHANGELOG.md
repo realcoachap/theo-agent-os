@@ -6,6 +6,10 @@ Noted by Theo - 2026-06-09
 
 ### Fixed
 
+- Refuse duplicate `job_id` values cleanly before run creation instead of
+  leaking a raw `FileExistsError` traceback.
+- Restore default SIGPIPE handling in `bin/receipt` so piping to tools such as
+  `head` does not print BrokenPipe noise.
 - Resolve worker `env_profile` through explicit `$VAR` caller references,
   fail loud on missing variables, and strip stray caller `ANTHROPIC_*` values
   from child environments unless a worker explicitly declares them.
