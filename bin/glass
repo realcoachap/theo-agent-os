@@ -1,0 +1,865 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Glass v0.1.0 - Noted by Theo - 2026-06-10.
+
+Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
+and exposes only two tiny write lanes: memory proposal verdict queue entries
+and manual security checklist attestations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RUNS = REPO_ROOT / "runs"
+MEMORY_QUEUE = REPO_ROOT / "memory" / "queue.jsonl"
+SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
+REGISTRY = REPO_ROOT / "registry" / "workers.json"
+PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
+RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
+LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+MAX_PREVIEW_BYTES = 120_000
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def read_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def run(cmd: list[str], cwd: Path | None = None, timeout: int = 5) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+
+
+def local_host_header(value: str | None) -> bool:
+    if not value:
+        return True
+    host = value.rsplit("@", 1)[-1].split(":", 1)[0].strip("[]").lower()
+    return host in LOCAL_HOSTS
+
+
+def same_origin(value: str | None) -> bool:
+    if not value:
+        return True
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and local_host_header(parsed.netloc)
+
+
+def path_inside(child: Path, parent: Path) -> bool:
+    child_resolved = child.resolve()
+    parent_resolved = parent.resolve()
+    return child_resolved == parent_resolved or parent_resolved in child_resolved.parents
+
+
+def validate_result(path: Path) -> list[str]:
+    proc = run([str(REPO_ROOT / "bin" / "validate"), str(RESULT_SCHEMA), str(path)])
+    if proc.returncode == 0:
+        return []
+    return [line.strip() for line in (proc.stderr or proc.stdout).splitlines() if line.strip()]
+
+
+def index_entries() -> dict[str, dict[str, object]]:
+    index = RUNS / "index.jsonl"
+    entries: dict[str, dict[str, object]] = {}
+    if not index.exists():
+        return entries
+    for line_no, line in enumerate(index.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        job_id = str(entry.get("job_id", f"index-line-{line_no}"))
+        entries[job_id] = entry
+    return entries
+
+
+def result_paths() -> list[Path]:
+    paths = {path.resolve() for path in RUNS.glob("*/*/result.json")}
+    for entry in index_entries().values():
+        run_dir = entry.get("run_dir")
+        if isinstance(run_dir, str):
+            candidate = (REPO_ROOT / run_dir / "result.json").resolve()
+            if candidate.exists():
+                paths.add(candidate)
+    return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def load_runs() -> list[dict[str, object]]:
+    entries = index_entries()
+    loaded: list[dict[str, object]] = []
+    for result_path in result_paths():
+        run_dir = result_path.parent
+        job_id = run_dir.name
+        errors = validate_result(result_path)
+        if errors:
+            loaded.append({
+                "valid": False,
+                "job_id": job_id,
+                "run_dir": rel(run_dir),
+                "result_path": rel(result_path),
+                "errors": errors,
+                "summary": "Invalid result envelope.",
+                "status": "failed",
+                "state": "review",
+                "worker": entries.get(job_id, {}).get("worker", "unknown"),
+                "lane": entries.get(job_id, {}).get("lane", "unknown"),
+                "artifacts": [],
+                "memory_proposals": [],
+            })
+            continue
+        result = read_json(result_path)
+        entry = entries.get(str(result.get("job_id")), {})
+        job_path = run_dir / "job.json"
+        job: dict[str, object] = {}
+        if job_path.exists():
+            try:
+                job = read_json(job_path)  # type: ignore[assignment]
+            except Exception:
+                job = {}
+        loaded.append({
+            "valid": True,
+            "job_id": result.get("job_id", job_id),
+            "run_dir": rel(run_dir),
+            "result_path": rel(result_path),
+            "status": result.get("status", "unknown"),
+            "state": result.get("state", "unknown"),
+            "summary": result.get("summary", ""),
+            "tests": result.get("tests", {}),
+            "git": result.get("git", {}),
+            "worker": entry.get("worker") or job.get("worker") or artifact_worker(result),
+            "lane": entry.get("lane") or job.get("lane") or "self",
+            "created_at": entry.get("created_at", ""),
+            "finished_at": entry.get("finished_at", ""),
+            "artifacts": result.get("artifacts", []),
+            "memory_proposals": result.get("memory_proposals", []),
+            "transcript": result.get("transcript", ""),
+            "result": result,
+        })
+    return loaded
+
+
+def artifact_worker(result: object) -> str:
+    if isinstance(result, dict):
+        artifacts = result.get("artifacts", [])
+        if isinstance(artifacts, list) and artifacts:
+            first = artifacts[0]
+            if isinstance(first, dict) and isinstance(first.get("worker"), str):
+                return first["worker"]
+    return "unknown"
+
+
+def load_run(job_id: str) -> dict[str, object] | None:
+    for item in load_runs():
+        if item.get("job_id") == job_id:
+            result_path = REPO_ROOT / str(item["result_path"])
+            receipt = run([str(REPO_ROOT / "bin" / "receipt"), str(result_path)]).stdout
+            transcript_text = ""
+            result = item.get("result", {})
+            if isinstance(result, dict):
+                transcript_value = result.get("transcript")
+                if isinstance(transcript_value, str):
+                    transcript_path = (REPO_ROOT / transcript_value).resolve()
+                    run_dir = (REPO_ROOT / str(item["run_dir"])).resolve()
+                    if path_inside(transcript_path, run_dir) and transcript_path.exists():
+                        transcript_text = transcript_path.read_text(encoding="utf-8", errors="replace")[:MAX_PREVIEW_BYTES]
+            detail = dict(item)
+            detail["receipt"] = receipt
+            detail["transcript_text"] = transcript_text
+            return detail
+    return None
+
+
+def lane_paths(runs: list[dict[str, object]]) -> list[Path]:
+    paths = [REPO_ROOT]
+    for item in runs:
+        lane = item.get("lane")
+        if not isinstance(lane, str) or lane == "self":
+            continue
+        candidate = Path(lane).expanduser().resolve()
+        if candidate.exists() and candidate.is_dir() and candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def repo_maps(runs: list[dict[str, object]]) -> list[dict[str, object]]:
+    maps: list[dict[str, object]] = []
+    for lane in lane_paths(runs):
+        graph = lane / "graphify-out" / "graph.json"
+        head_file = lane / "graphify-out" / ".head"
+        if not graph.exists() and not head_file.exists():
+            continue
+        current = ""
+        head_proc = run(["git", "rev-parse", "HEAD"], cwd=lane)
+        if head_proc.returncode == 0:
+            current = head_proc.stdout.strip()
+        recorded = head_file.read_text(encoding="utf-8").strip() if head_file.exists() else ""
+        maps.append({
+            "lane": "self" if lane == REPO_ROOT else str(lane),
+            "graph": rel(graph) if path_inside(graph, REPO_ROOT) else str(graph),
+            "recorded_head": recorded,
+            "current_head": current,
+            "fresh": bool(current and recorded and current == recorded),
+        })
+    for item in runs:
+        run_dir = REPO_ROOT / str(item.get("run_dir", ""))
+        graph = run_dir / "graphify-out" / "graph.json"
+        head_file = run_dir / "graphify-out" / ".head"
+        if graph.exists() or head_file.exists():
+            recorded = head_file.read_text(encoding="utf-8").strip() if head_file.exists() else ""
+            maps.append({
+                "lane": f"run:{item.get('job_id')}",
+                "graph": rel(graph),
+                "recorded_head": recorded,
+                "current_head": recorded,
+                "fresh": True,
+            })
+    return maps
+
+
+def specs(runs: list[dict[str, object]]) -> list[dict[str, object]]:
+    found: list[dict[str, object]] = []
+    seen: set[Path] = set()
+    for lane in lane_paths(runs):
+        specs_root = lane / "specs"
+        if not specs_root.exists():
+            continue
+        for spec in sorted(specs_root.glob("**/spec.md")):
+            task = spec.parent / "tasks.md"
+            for path, kind in ((spec, "spec"), (task, "tasks")):
+                if not path.exists() or path.resolve() in seen:
+                    continue
+                seen.add(path.resolve())
+                found.append({
+                    "lane": "self" if lane == REPO_ROOT else str(lane),
+                    "kind": kind,
+                    "path": rel(path) if path_inside(path, REPO_ROOT) else str(path),
+                    "text": path.read_text(encoding="utf-8", errors="replace")[:40_000],
+                })
+    return found
+
+
+def artifact_list(runs: list[dict[str, object]]) -> list[dict[str, object]]:
+    artifacts: list[dict[str, object]] = []
+    for item in runs:
+        for index, artifact in enumerate(item.get("artifacts", [])):
+            if not isinstance(artifact, dict):
+                continue
+            row = dict(artifact)
+            row["job_id"] = item.get("job_id")
+            row["run_dir"] = item.get("run_dir")
+            row["index"] = index
+            artifacts.append(row)
+    return artifacts
+
+
+def memory_proposals(runs: list[dict[str, object]]) -> list[dict[str, object]]:
+    proposals: list[dict[str, object]] = []
+    for item in runs:
+        lane = item.get("lane", "self")
+        for index, proposal in enumerate(item.get("memory_proposals", [])):
+            proposals.append({
+                "id": f"{item.get('job_id')}:{index}",
+                "source_job": item.get("job_id"),
+                "source_result": item.get("result_path"),
+                "lane": lane,
+                "proposal": str(proposal),
+            })
+    return proposals
+
+
+def security_checklist() -> dict[str, object]:
+    if SECURITY_CHECKLIST.exists():
+        return read_json(SECURITY_CHECKLIST)  # type: ignore[return-value]
+    return {"version": "0.1.0", "items": []}
+
+
+def operator_status() -> dict[str, object]:
+    path = RUNS / "operator-status.json"
+    pinned = PINNED_VERSION.read_text(encoding="utf-8").strip() if PINNED_VERSION.exists() else ""
+    if not path.exists():
+        return {"stale": True, "up": False, "pinned": pinned, "summary": "operator-status.json missing"}
+    try:
+        data = read_json(path)
+    except Exception as exc:
+        return {"stale": True, "up": False, "pinned": pinned, "summary": f"operator-status unreadable: {exc}"}
+    ts = str(data.get("ts", ""))
+    stale = True
+    try:
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        stale = time.time() - parsed.timestamp() > 600
+    except Exception:
+        stale = True
+    if isinstance(data, dict):
+        data = dict(data)
+        data["stale"] = stale
+        return data
+    return {"stale": True, "up": False, "pinned": pinned, "summary": "operator-status invalid"}
+
+
+def workers() -> dict[str, object]:
+    registry = read_json(REGISTRY) if REGISTRY.exists() else {"workers": []}
+    return {"registry": registry, "operator": operator_status()}
+
+
+def state() -> dict[str, object]:
+    runs = load_runs()
+    return {
+        "generated_at": utc_now(),
+        "runs": runs,
+        "artifacts": artifact_list(runs),
+        "repo_maps": repo_maps(runs),
+        "specs": specs(runs),
+        "memory_proposals": memory_proposals(runs),
+        "workers": workers(),
+        "security": security_checklist(),
+        "control_ui_url": "http://127.0.0.1:18789",
+    }
+
+
+def resolve_artifact(job_id: str, index: int) -> tuple[dict[str, object] | None, Path | None, str]:
+    item = load_run(job_id)
+    if not item or not item.get("valid"):
+        return None, None, "run not found"
+    artifacts = item.get("artifacts", [])
+    if not isinstance(artifacts, list) or index < 0 or index >= len(artifacts):
+        return None, None, "artifact not found"
+    artifact = artifacts[index]
+    if not isinstance(artifact, dict):
+        return None, None, "artifact invalid"
+    raw = artifact.get("path")
+    if not isinstance(raw, str) or not raw:
+        return artifact, None, "artifact path missing"
+    raw_path = Path(raw)
+    if raw_path.is_absolute():
+        return artifact, None, "absolute artifact paths are blocked"
+    run_dir = (REPO_ROOT / str(item["run_dir"])).resolve()
+    candidates = [(REPO_ROOT / raw_path).resolve(), (run_dir / raw_path).resolve()]
+    path = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not path_inside(path, run_dir):
+        return artifact, None, "artifact path escapes its run directory"
+    if not path.exists() or not path.is_file():
+        return artifact, None, "artifact file missing"
+    return artifact, path, ""
+
+
+def page() -> str:
+    return r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theo Agent OS Glass</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #101114;
+  --panel: #181b20;
+  --panel-2: #20242b;
+  --line: #323741;
+  --text: #eef1f3;
+  --muted: #a7afb9;
+  --green: #64d18a;
+  --amber: #e6bb5d;
+  --red: #ef6a67;
+  --blue: #7fb3ff;
+  --violet: #c59cff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  background: #14161a;
+}
+h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0; }
+.subtle { color: var(--muted); font-size: 12px; }
+.tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  background: #121418;
+}
+.tab {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  min-height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tab.active { color: var(--text); background: var(--panel-2); border-color: #4a505b; }
+main { padding: 18px 22px 40px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; }
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+  min-width: 0;
+}
+.row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.title { font-weight: 700; overflow-wrap: anywhere; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.pill { display: inline-flex; min-height: 22px; align-items: center; border-radius: 999px; padding: 0 8px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+.success { color: var(--green); border-color: #37654a; }
+.partial, .blocked { color: var(--amber); border-color: #756234; }
+.failed { color: var(--red); border-color: #774240; }
+.review { color: var(--blue); }
+.muted { color: var(--muted); }
+button, a.button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  min-height: 32px;
+  padding: 0 10px;
+  text-decoration: none;
+  cursor: pointer;
+}
+button:hover, a.button:hover { border-color: #59616e; }
+button.danger { color: var(--red); }
+pre {
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0b0c0f;
+  padding: 12px;
+}
+.hidden { display: none; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.detail { grid-column: 1 / -1; }
+.artifact-preview iframe { width: 100%; min-height: 260px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.blocked-box { border: 1px dashed #76553a; color: var(--amber); border-radius: 6px; padding: 10px; background: #1c1710; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 0.4fr); gap: 12px; }
+@media (max-width: 820px) {
+  header { align-items: flex-start; flex-direction: column; }
+  main, header, .tabs { padding-left: 14px; padding-right: 14px; }
+  .split { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Theo Agent OS Glass</h1>
+    <div class="subtle" id="stamp">loading</div>
+  </div>
+  <a class="button" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
+</header>
+<nav class="tabs" id="tabs"></nav>
+<main id="app"></main>
+<script>
+const tabs = ["Runs", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
+let current = "Runs";
+let appState = null;
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function cls(status) { return ["success","partial","blocked","failed"].includes(status) ? status : ""; }
+function short(id) { return String(id || "").slice(0, 8); }
+function tabBar() {
+  document.getElementById("tabs").innerHTML = tabs.map(t => `<button class="tab ${t === current ? "active" : ""}" data-tab="${esc(t)}">${esc(t)}</button>`).join("");
+  document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => { current = btn.dataset.tab; render(); });
+}
+async function loadState() {
+  const res = await fetch("/api/state", {cache: "no-store"});
+  appState = await res.json();
+  document.getElementById("stamp").textContent = `updated ${appState.generated_at}`;
+  render();
+}
+function runCard(run) {
+  const tests = run.tests || {};
+  const git = run.git || {};
+  return `<article class="card">
+    <div class="row"><div class="title mono">${esc(short(run.job_id))}</div><span class="pill ${cls(run.status)}">${esc(run.status)}</span></div>
+    <div class="subtle">${esc(run.lane)} / ${esc(run.worker)} / <span class="${esc(run.state)}">${esc(run.state)}</span></div>
+    <p>${esc(run.summary)}</p>
+    <div class="subtle">tests ${esc(tests.passed ?? 0)}/${esc(tests.failed ?? 0)} · branch ${esc(git.branch || "(none)")}</div>
+    <p><button onclick="openRun('${esc(run.job_id)}')">Open Run</button></p>
+  </article>`;
+}
+async function openRun(jobId) {
+  const res = await fetch(`/api/run/${encodeURIComponent(jobId)}`, {cache: "no-store"});
+  const detail = await res.json();
+  document.getElementById("run-detail").innerHTML = `<section class="card detail">
+    <div class="row"><div class="title">Run ${esc(detail.job_id)}</div><span class="pill ${cls(detail.status)}">${esc(detail.status)}</span></div>
+    <p>${esc(detail.summary)}</p>
+    <div class="split">
+      <div><h3>Receipt</h3><pre>${esc(detail.receipt || "")}</pre></div>
+      <div><h3>Result</h3><pre>${esc(JSON.stringify(detail.result || detail, null, 2))}</pre></div>
+    </div>
+    <h3>Transcript</h3><pre>${esc(detail.transcript_text || "(none)")}</pre>
+  </section>`;
+  document.getElementById("run-detail").scrollIntoView({block: "start"});
+}
+function renderRuns() {
+  return `<div id="run-detail"></div><section class="grid">${(appState.runs || []).map(runCard).join("") || empty("No runs yet.")}</section>`;
+}
+async function previewArtifact(jobId, index, target) {
+  const res = await fetch(`/api/artifact?job_id=${encodeURIComponent(jobId)}&index=${index}`, {cache: "no-store"});
+  const data = await res.json();
+  if (data.blocked) {
+    target.innerHTML = `<div class="blocked-box">blocked: ${esc(data.reason)}</div>`;
+    return;
+  }
+  if (data.preview_kind === "html") {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    iframe.srcdoc = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';">` + data.content;
+    target.innerHTML = "";
+    target.appendChild(iframe);
+    return;
+  }
+  if (data.preview_kind === "image") {
+    target.innerHTML = `<img alt="" style="max-width:100%;border-radius:6px;border:1px solid var(--line)" src="${esc(data.data_url)}">`;
+    return;
+  }
+  target.innerHTML = `<pre>${esc(data.content || "")}</pre>`;
+}
+function artifactCard(a) {
+  const blocked = a.preview_kind === "html" && a.safe_to_render !== true;
+  const artifactPath = String(a.path || "");
+  const badPath = artifactPath.startsWith("/") || artifactPath.includes("../") || artifactPath.includes("..\\");
+  const noPreview = a.preview_kind === "none";
+  const blockReason = blocked ? "untrusted html" : badPath ? "unsafe path" : noPreview ? "no preview declared" : "";
+  return `<article class="card">
+    <div class="row"><div class="title">${esc(a.title || "Untitled")}</div><span class="pill">${esc(a.artifact_type)}</span></div>
+    <div class="subtle">${esc(a.worker)} / ${esc(short(a.source_job))} / ${esc(a.preview_kind)}</div>
+    <p>${esc(a.summary)}</p>
+    <div class="mono subtle">${esc(a.path)}</div>
+    ${blockReason ? `<div class="blocked-box">blocked: ${esc(blockReason)}</div>` : `<p><button onclick="previewArtifact('${esc(a.job_id)}', ${Number(a.index)}, this.parentElement.nextElementSibling)">Preview</button></p><div class="artifact-preview"></div>`}
+  </article>`;
+}
+function renderArtifacts() {
+  return `<section class="grid">${(appState.artifacts || []).map(artifactCard).join("") || empty("No artifacts yet.")}</section>`;
+}
+function renderRepoMaps() {
+  return `<section class="grid">${(appState.repo_maps || []).map(m => `<article class="card">
+    <div class="row"><div class="title">${esc(m.lane)}</div><span class="pill ${m.fresh ? "success" : "blocked"}">${m.fresh ? "FRESH" : "STALE"}</span></div>
+    <p class="mono">${esc(m.graph)}</p>
+    <div class="subtle">recorded ${esc(short(m.recorded_head))} / current ${esc(short(m.current_head))}</div>
+  </article>`).join("") || empty("No repo maps found.")}</section>`;
+}
+function renderSpecs() {
+  return `<section class="stack">${(appState.specs || []).map(s => `<article class="card">
+    <div class="row"><div class="title">${esc(s.path)}</div><span class="pill">${esc(s.kind)}</span></div>
+    <div class="subtle">${esc(s.lane)}</div>
+    <pre>${esc(s.text)}</pre>
+  </article>`).join("") || empty("No specs found.")}</section>`;
+}
+async function queueProposal(item, verdict, btn) {
+  const res = await fetch("/api/memory-proposal", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+    body: JSON.stringify({...item, verdict})
+  });
+  const data = await res.json();
+  btn.closest(".card").querySelector(".write-status").textContent = data.ok ? `queued ${verdict}` : `error: ${data.error}`;
+}
+function queueProposalById(id, verdict, btn) {
+  const item = (appState.memory_proposals || []).find(p => p.id === id);
+  if (!item) {
+    btn.closest(".card").querySelector(".write-status").textContent = "error: proposal disappeared";
+    return;
+  }
+  queueProposal(item, verdict, btn);
+}
+function renderProposals() {
+  return `<section class="grid">${(appState.memory_proposals || []).map(p => `<article class="card">
+    <div class="row"><div class="title">${esc(p.lane)}</div><span class="pill">${esc(short(p.source_job))}</span></div>
+    <p>${esc(p.proposal)}</p>
+    <p><button onclick="queueProposalById('${esc(p.id)}', 'approve', this)">Approve</button> <button class="danger" onclick="queueProposalById('${esc(p.id)}', 'reject', this)">Reject</button></p>
+    <div class="subtle write-status"></div>
+  </article>`).join("") || empty("No memory proposals.")}</section>`;
+}
+function renderWorkers() {
+  const operator = (appState.workers || {}).operator || {};
+  const registry = ((appState.workers || {}).registry || {}).workers || [];
+  return `<section class="grid">
+    <article class="card">
+      <div class="row"><div class="title">Operator (OpenClaw)</div><span class="pill ${operator.up ? "success" : "blocked"}">${operator.up ? "UP" : "DOWN"}</span></div>
+      <p class="${operator.stale ? "blocked" : "success"}">${operator.stale ? "STALE" : "FRESH"}</p>
+      <pre>${esc(JSON.stringify(operator, null, 2))}</pre>
+      <a class="button" target="_blank" rel="noreferrer" href="${esc(appState.control_ui_url)}">Open Control UI</a>
+    </article>
+    ${registry.map(w => `<article class="card">
+      <div class="row"><div class="title">${esc(w.name)}</div><span class="pill ${w.adapter_pending ? "" : "success"}">${esc(w.status || "unknown")}</span></div>
+      <p>${esc((w.strengths || []).join(", "))}</p>
+      <pre>${esc(JSON.stringify(w, null, 2))}</pre>
+    </article>`).join("")}
+  </section>`;
+}
+async function updateCheck(item, checked, box) {
+  const res = await fetch("/api/security-check", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+    body: JSON.stringify({id: item.id, checked})
+  });
+  const data = await res.json();
+  box.closest(".card").querySelector(".write-status").textContent = data.ok ? "updated" : `error: ${data.error}`;
+}
+function renderSecurity() {
+  const items = ((appState.security || {}).items || []);
+  return `<section class="grid">${items.map(item => `<article class="card">
+    <label class="row"><span class="title">${esc(item.label)}</span><input type="checkbox" ${item.checked ? "checked" : ""} onchange='updateCheck(${JSON.stringify(item).replaceAll("'", "&#39;")}, this.checked, this)'></label>
+    <p class="muted">${esc(item.description)}</p>
+    <div class="subtle">updated ${esc(item.ts || "never")}</div>
+    <div class="subtle write-status"></div>
+  </article>`).join("") || empty("No checklist configured.")}</section>`;
+}
+function empty(text) { return `<article class="card"><p>${esc(text)}</p></article>`; }
+function render() {
+  tabBar();
+  if (!appState) return;
+  const renderers = {
+    "Runs": renderRuns,
+    "Artifacts": renderArtifacts,
+    "Repo Maps": renderRepoMaps,
+    "Specs": renderSpecs,
+    "Memory Proposals": renderProposals,
+    "Workers": renderWorkers,
+    "Security": renderSecurity
+  };
+  document.getElementById("app").innerHTML = renderers[current]();
+}
+tabBar();
+loadState();
+setInterval(loadState, 3000);
+</script>
+</body>
+</html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "TheoAgentOSGlass/0.1.0"
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def _headers(self, status: int, content_type: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self' about:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'")
+        self.end_headers()
+
+    def send_json(self, data: object, status: int = 200) -> None:
+        body = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
+        self._headers(status, "application/json; charset=utf-8")
+        self.wfile.write(body)
+
+    def send_html(self, body: str, status: int = 200) -> None:
+        self._headers(status, "text/html; charset=utf-8")
+        self.wfile.write(body.encode("utf-8"))
+
+    def forbidden(self, reason: str = "forbidden") -> None:
+        self.send_json({"ok": False, "error": reason}, 403)
+
+    def check_host(self) -> bool:
+        if local_host_header(self.headers.get("Host")):
+            return True
+        self.forbidden("bad host header; Glass is localhost-only")
+        return False
+
+    def check_post(self) -> bool:
+        if not self.check_host():
+            return False
+        if self.headers.get("X-Theo-Glass") != "1":
+            self.forbidden("missing local Glass write header")
+            return False
+        if not same_origin(self.headers.get("Origin")) or not same_origin(self.headers.get("Referer")):
+            self.forbidden("non-local origin rejected")
+            return False
+        return True
+
+    def post_json(self) -> dict[str, object] | None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > 32_000:
+            self.send_json({"ok": False, "error": "request too large"}, 413)
+            return None
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception as exc:
+            self.send_json({"ok": False, "error": f"invalid json: {exc}"}, 400)
+            return None
+
+    def do_GET(self) -> None:
+        if not self.check_host():
+            return
+        parsed = urlparse(self.path)
+        if parsed.path in {"/", ""} or parsed.path.startswith("/run/"):
+            self.send_html(page())
+            return
+        if parsed.path == "/api/state":
+            self.send_json(state())
+            return
+        if parsed.path.startswith("/api/run/"):
+            job_id = parsed.path.rsplit("/", 1)[-1]
+            detail = load_run(job_id)
+            if not detail:
+                self.send_json({"ok": False, "error": "run not found"}, 404)
+                return
+            self.send_json(detail)
+            return
+        if parsed.path == "/api/artifact":
+            params = parse_qs(parsed.query)
+            job_id = params.get("job_id", [""])[0]
+            try:
+                index = int(params.get("index", ["-1"])[0])
+            except ValueError:
+                index = -1
+            artifact, path, reason = resolve_artifact(job_id, index)
+            if not artifact or not path:
+                self.send_json({"blocked": True, "reason": reason or "artifact blocked"})
+                return
+            preview_kind = str(artifact.get("preview_kind", "none"))
+            safe = artifact.get("safe_to_render") is True
+            if preview_kind == "html" and not safe:
+                self.send_json({"blocked": True, "reason": "untrusted html"})
+                return
+            if preview_kind == "none":
+                self.send_json({"blocked": True, "reason": "artifact declares no preview"})
+                return
+            raw = path.read_bytes()[:MAX_PREVIEW_BYTES]
+            if preview_kind == "image":
+                import base64
+                suffix = path.suffix.lower()
+                mime = "image/png" if suffix == ".png" else "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/gif" if suffix == ".gif" else "application/octet-stream"
+                self.send_json({"blocked": False, "preview_kind": "image", "data_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"})
+                return
+            text = raw.decode("utf-8", errors="replace")
+            self.send_json({"blocked": False, "preview_kind": preview_kind, "content": text})
+            return
+        self.send_json({"ok": False, "error": "not found"}, 404)
+
+    def do_POST(self) -> None:
+        if not self.check_post():
+            return
+        parsed = urlparse(self.path)
+        data = self.post_json()
+        if data is None:
+            return
+        if parsed.path == "/api/memory-proposal":
+            verdict = data.get("verdict")
+            proposal = data.get("proposal")
+            source_job = data.get("source_job")
+            if verdict not in {"approve", "reject"} or not isinstance(proposal, str) or not isinstance(source_job, str):
+                self.send_json({"ok": False, "error": "invalid proposal verdict"}, 400)
+                return
+            known = {(item["source_job"], item["proposal"]) for item in memory_proposals(load_runs())}
+            if (source_job, proposal) not in known:
+                self.send_json({"ok": False, "error": "proposal is not declared by a result envelope"}, 400)
+                return
+            MEMORY_QUEUE.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "kind": "memory_verdict",
+                "created_at": utc_now(),
+                "ts": utc_now(),
+                "lane": data.get("lane", "self"),
+                "proposal": proposal,
+                "proposal_id": data.get("id", f"{source_job}:unknown"),
+                "source_job": source_job,
+                "source_result": data.get("source_result", ""),
+                "verdict": verdict,
+                "status": "proposed",
+            }
+            with MEMORY_QUEUE.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, sort_keys=True) + "\n")
+            self.send_json({"ok": True, "entry": entry})
+            return
+        if parsed.path == "/api/security-check":
+            item_id = data.get("id")
+            if not isinstance(item_id, str):
+                self.send_json({"ok": False, "error": "missing checklist id"}, 400)
+                return
+            checklist = security_checklist()
+            items = checklist.get("items", []) if isinstance(checklist, dict) else []
+            updated = False
+            for item in items:
+                if isinstance(item, dict) and item.get("id") == item_id:
+                    item["checked"] = bool(data.get("checked"))
+                    item["ts"] = utc_now()
+                    updated = True
+                    break
+            if not updated:
+                self.send_json({"ok": False, "error": "unknown checklist item"}, 404)
+                return
+            write_json(SECURITY_CHECKLIST, checklist)
+            self.send_json({"ok": True})
+            return
+        self.send_json({"ok": False, "error": "not found"}, 404)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Theo Agent OS Glass on localhost only.")
+    parser.add_argument("--host", "--bind", dest="host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=4040)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.host != "127.0.0.1":
+        print("Glass refuses non-local bind values; use 127.0.0.1.", file=sys.stderr)
+        return 2
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"Glass listening on http://{args.host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

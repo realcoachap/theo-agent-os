@@ -78,3 +78,20 @@ Irreversible actions require approval before execution.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
+
+## Glass Contract
+
+- `bin/glass` is a localhost-only read surface over `runs/` and declared
+  artifacts. It must refuse non-`127.0.0.1` binds.
+- Glass never dispatches jobs, retries jobs, kills jobs, pushes code, proxies
+  OpenClaw, or iframes the Control UI.
+- The only Glass writes are:
+  - append-only memory verdict entries in `memory/queue.jsonl`
+  - manual checklist attestations in `security/checklist.json`
+- Artifact previews must be declared by valid result envelopes and remain
+  inside their run directory. Absolute paths and escaping paths are blocked.
+- HTML artifact previews require `safe_to_render=true` and still render in a
+  sandboxed iframe. Untrusted HTML shows metadata and a blocked badge.
+- `bin/operator-status` reads `OPENCLAW_UI_TOKEN` only from the calling
+  environment, strips credential-like data, and writes only
+  `runs/operator-status.json`.

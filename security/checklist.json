@@ -1,0 +1,56 @@
+{
+  "date": "2026-06-10",
+  "items": [
+    {
+      "checked": false,
+      "description": "OpenClaw version is pinned and update cadence is intentional.",
+      "id": "openclaw-pinned",
+      "label": "OpenClaw pinned",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "Gateway is bound to localhost or Tailnet only, never public WAN.",
+      "id": "gateway-localhost",
+      "label": "Gateway localhost-only",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "Control UI token authentication is enabled; auth:none is not accepted.",
+      "id": "control-ui-token-auth",
+      "label": "Control UI token auth",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "Control UI and Glass are not exposed beyond localhost or Tailnet.",
+      "id": "ui-not-public",
+      "label": "UI not public",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "New skills, MCP servers, and worker tools passed scanner/source review.",
+      "id": "skills-scanned",
+      "label": "Skills scanned",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "Repository grep is clean for secrets and key-like strings.",
+      "id": "secrets-grep-clean",
+      "label": "Secrets grep clean",
+      "ts": ""
+    },
+    {
+      "checked": false,
+      "description": "Graphify freshness hooks are installed for each active lane.",
+      "id": "hooks-installed",
+      "label": "Graph hooks installed",
+      "ts": ""
+    }
+  ],
+  "noted_by": "Theo",
+  "version": "0.1.0"
+}

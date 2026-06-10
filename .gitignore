@@ -8,6 +8,7 @@
 .sandbox/
 runs/*
 !runs/.gitkeep
+memory/queue.jsonl
 graphify-out/
 !jobs/examples/stale-graph/graphify-out/
 !jobs/examples/stale-graph/graphify-out/.head

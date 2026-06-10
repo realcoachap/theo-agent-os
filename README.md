@@ -41,7 +41,10 @@ docs/
   ROADMAP.md
 bin/
   dispatch
+  glass
+  operator-status
   receipt
+  seed-demo
   validate
 adapters/
   graphify.sh
@@ -52,11 +55,14 @@ schemas/
   job.schema.json
   result.schema.json
 registry/
+  pinned-version.txt
   workers.json
 jobs/
   examples/
 runs/
   .gitkeep
+security/
+  checklist.json
 scripts/
   install-hermes-sandbox.sh
 ```
@@ -147,3 +153,27 @@ docs/FABLE-SHOT1-ZIP-REVIEW.md
 ```
 
 Verdict: useful reference, not a replacement for this repo's Shot 1.
+
+## Shot 2 Glass
+
+Glass is the localhost Mission Control viewer over Foundry run envelopes:
+
+```bash
+bin/seed-demo
+bin/operator-status
+bin/glass
+```
+
+Then open:
+
+```text
+http://127.0.0.1:4040
+```
+
+Glass is deliberately read-mostly. It can append memory proposal verdicts to
+`memory/queue.jsonl` and update manual security checklist timestamps in
+`security/checklist.json`; it cannot dispatch jobs or proxy OpenClaw.
+
+Unsafe HTML artifacts show a blocked badge unless the result envelope declares
+`safe_to_render=true`, and artifact preview paths must stay inside their own
+run directory.

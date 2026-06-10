@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Theo Agent OS operator-status v0.1.0 - Noted by Theo - 2026-06-10.
+
+Writes a credential-stripped OpenClaw status snapshot for Glass. The gateway
+token is read only from OPENCLAW_UI_TOKEN and is never written to disk.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RUNS = REPO_ROOT / "runs"
+PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
+LOCAL_GATEWAY_URL = "ws://127.0.0.1:18789"
+SENSITIVE_RE = re.compile(r"(token|secret|password|api[_-]?key|credential|bearer)", re.IGNORECASE)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def run(cmd: list[str], timeout: int = 8) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    payload: Any = proc.stdout.strip()
+    if proc.stdout.strip().startswith("{") or proc.stdout.strip().startswith("["):
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            payload = proc.stdout.strip()
+    return {"ok": proc.returncode == 0, "returncode": proc.returncode, "stdout": redact(payload), "stderr": redact(proc.stderr.strip())}
+
+
+def redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, child in value.items():
+            if SENSITIVE_RE.search(str(key)):
+                redacted[str(key)] = "[redacted]"
+            else:
+                redacted[str(key)] = redact(child)
+        return redacted
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(r"(Bearer\s+)[^\s]+", r"\1[redacted]", value)
+    return value
+
+
+def installed_version() -> str:
+    proc = subprocess.run(["openclaw", "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return (proc.stdout or proc.stderr).strip()
+
+
+def main() -> int:
+    token = os.environ.get("OPENCLAW_UI_TOKEN", "")
+    pinned = PINNED_VERSION.read_text(encoding="utf-8").strip() if PINNED_VERSION.exists() else ""
+    version = installed_version()
+    status: dict[str, Any] = {
+        "ts": utc_now(),
+        "up": False,
+        "version": version,
+        "pinned": pinned,
+        "version_matches": bool(pinned and pinned == version),
+        "gateway_summary": {"status": "not probed"},
+        "auth_summary": {"status": "not probed"},
+    }
+    if not token:
+        status["auth_summary"] = {"status": "OPENCLAW_UI_TOKEN missing; gateway was not probed"}
+    else:
+        gateway = run(["openclaw", "gateway", "call", "status", "--json", "--url", LOCAL_GATEWAY_URL, "--token", token, "--timeout", "5000"])
+        models = run(["openclaw", "gateway", "call", "models.authStatus", "--json", "--url", LOCAL_GATEWAY_URL, "--token", token, "--timeout", "5000"])
+        if not models.get("ok"):
+            models = run(["openclaw", "models", "status", "--json"])
+        status["gateway_summary"] = gateway
+        status["auth_summary"] = models
+        status["up"] = bool(gateway.get("ok"))
+    RUNS.mkdir(exist_ok=True)
+    out = RUNS / "operator-status.json"
+    out.write_text(json.dumps(redact(status), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

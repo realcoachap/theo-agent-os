@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Glass demo seeder v0.1.0 - Noted by Theo - 2026-06-10.
+
+Creates clearly labeled Shot 2 demo runs that validate against the canonical
+result schema. This is for Glass verification only; real runs still come from
+bin/dispatch.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RUNS = REPO_ROOT / "runs"
+SCHEMA_RESULT = REPO_ROOT / "schemas" / "result.schema.json"
+
+
+def rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def git_branch() -> str:
+    proc = subprocess.run(["git", "branch", "--show-current"], cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def write_run(kind: str, result: dict[str, object], artifacts: dict[str, str]) -> Path:
+    today = datetime.now().strftime("%Y-%m-%d")
+    run_dir = RUNS / today / str(result["job_id"])
+    run_dir.mkdir(parents=True, exist_ok=False)
+    (run_dir / "job.json").write_text(json.dumps({
+        "job_id": result["job_id"],
+        "lane": "self",
+        "intent": "review",
+        "worker": "demo",
+        "model_profile": "default",
+        "task": f"DEMO Shot 2 Glass fixture: {kind}",
+        "context": {},
+        "permissions": {"tier": "read_only", "write": [], "deny": [".env*", "secrets/**"], "network": False, "git_push": False},
+        "verify": {"tests": None, "lint": False},
+        "budget": {"max_minutes": 1, "max_tokens": 1},
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (run_dir / "transcript.md").write_text(f"# DEMO Transcript\n\nFixture kind: {kind}\n", encoding="utf-8")
+    for name, content in artifacts.items():
+        path = run_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    (run_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    proc = subprocess.run([str(REPO_ROOT / "bin" / "validate"), str(SCHEMA_RESULT), str(run_dir / "result.json")], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout)
+    entry = {
+        "job_id": result["job_id"],
+        "date": today,
+        "lane": "self",
+        "worker": "demo",
+        "status": result["status"],
+        "state": result["state"],
+        "run_dir": rel(run_dir),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "summary": result["summary"],
+    }
+    with (RUNS / "index.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    return run_dir
+
+
+def base(status: str, summary: str) -> dict[str, object]:
+    job_id = str(uuid.uuid4())
+    return {
+        "job_id": job_id,
+        "status": status,
+        "state": "review",
+        "summary": f"DEMO ONLY: {summary}",
+        "diff": None,
+        "files_touched": [],
+        "tests": {"ran": False, "passed": 0, "failed": 0},
+        "git": {"branch": git_branch(), "dirty": False, "commits": []},
+        "transcript": "",
+        "artifacts": [],
+        "memory_proposals": [],
+        "followups": [],
+        "cost": {"tokens": 0, "minutes": 0},
+    }
+
+
+def attach(result: dict[str, object], run_dir: Path) -> dict[str, object]:
+    result["transcript"] = f"{rel(run_dir)}/transcript.md"
+    return result
+
+
+def main() -> int:
+    started = time.time()
+    created: list[Path] = []
+
+    failed = base("failed", "failed-result fixture for Glass run cards.")
+    failed["artifacts"] = [{
+        "artifact_type": "data",
+        "title": "Blocked absolute path fixture",
+        "summary": "Glass must refuse to preview this declared absolute path.",
+        "path": "/etc/passwd",
+        "preview_kind": "text",
+        "worker": "demo",
+        "source_job": failed["job_id"],
+        "safe_to_render": True,
+    }]
+    failed_dir = write_run("failed", failed, {})
+    created.append(failed_dir)
+    attach(failed, failed_dir)
+    (failed_dir / "result.json").write_text(json.dumps(failed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    blocked = base("blocked", "blocked-result fixture for Glass state handling.")
+    blocked_dir = write_run("blocked", blocked, {"blocked-report.md": "# DEMO Blocked\n\nThis run is intentionally blocked.\n"})
+    created.append(blocked_dir)
+    blocked["artifacts"] = [{
+        "artifact_type": "report",
+        "title": "Blocked run report",
+        "summary": "Plain text blocked-run detail.",
+        "path": f"{rel(blocked_dir)}/blocked-report.md",
+        "preview_kind": "text",
+        "worker": "demo",
+        "source_job": blocked["job_id"],
+        "safe_to_render": True,
+    }]
+    attach(blocked, blocked_dir)
+    (blocked_dir / "result.json").write_text(json.dumps(blocked, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    unsafe = base("success", "unsafe HTML artifact fixture for safe_to_render gating.")
+    unsafe_dir = write_run("unsafe-html", unsafe, {"unsafe.html": "<h1>DEMO Unsafe HTML</h1><script>document.body.dataset.bad='1'</script>\n"})
+    created.append(unsafe_dir)
+    unsafe["artifacts"] = [{
+        "artifact_type": "html",
+        "title": "Unsafe HTML demo artifact",
+        "summary": "Glass must show a blocked badge instead of rendering this file.",
+        "path": f"{rel(unsafe_dir)}/unsafe.html",
+        "preview_kind": "html",
+        "worker": "demo",
+        "source_job": unsafe["job_id"],
+        "safe_to_render": False,
+    }]
+    attach(unsafe, unsafe_dir)
+    (unsafe_dir / "result.json").write_text(json.dumps(unsafe, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    proposals = base("success", "memory proposal fixture with two queued proposals.")
+    proposals["memory_proposals"] = [
+        "DEMO proposal: remember that Glass queues approvals and never writes durable memory directly.",
+        "DEMO proposal: add unsafe HTML artifacts to every future viewer regression pack.",
+    ]
+    proposal_dir = write_run("memory-proposals", proposals, {"proposal-report.md": "# DEMO Proposals\n\nTwo memory proposals are attached.\n"})
+    created.append(proposal_dir)
+    proposals["artifacts"] = [{
+        "artifact_type": "report",
+        "title": "Proposal run report",
+        "summary": "Text artifact for the memory proposal demo run.",
+        "path": f"{rel(proposal_dir)}/proposal-report.md",
+        "preview_kind": "text",
+        "worker": "demo",
+        "source_job": proposals["job_id"],
+        "safe_to_render": True,
+    }]
+    attach(proposals, proposal_dir)
+    proposals["cost"] = {"tokens": 0, "minutes": round((time.time() - started) / 60, 3)}
+    (proposal_dir / "result.json").write_text(json.dumps(proposals, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    for run_dir in created:
+        proc = subprocess.run([str(REPO_ROOT / "bin" / "validate"), str(SCHEMA_RESULT), str(run_dir / "result.json")], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr or proc.stdout)
+    print("DEMO Shot 2 runs created:")
+    for run_dir in created:
+        print(rel(run_dir))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4,6 +4,13 @@ Noted by Theo - 2026-06-09
 
 ## Unreleased
 
+### Added
+
+- Shot 2 Glass implementation: localhost-only `bin/glass` run/artifact/spec/
+  worker/security viewer, `bin/seed-demo` schema-valid fixtures,
+  `bin/operator-status`, `registry/pinned-version.txt`, and
+  `security/checklist.json`.
+
 ### Fixed
 
 - Refuse duplicate `job_id` values cleanly before run creation instead of
@@ -20,8 +27,3 @@ Noted by Theo - 2026-06-09
 - Remove duplicate schema aliases and duplicate example-job directory.
 - Add labeled `GRAPHIFY_STUB=1` mode for envelope demos on machines without
   Graphify.
-
-### Added
-
-- Shot 1 Foundry implementation: dispatch, receipt, validate, read-only
-  Graphify adapter, examples, graph hook, and append-only run history.
