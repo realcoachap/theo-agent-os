@@ -94,4 +94,7 @@ Noted by Theo - 2026-06-09
   OpenClaw Telegram delivery.
 - [x] Add guarded runtime sender payload emission plus post-send
   `jobs/outbox/<command_id>/sent.json` delivery markers.
+- [x] Add Railway single-operator admin login mode, disabled by default behind
+  explicit secrets.
+- [ ] Design live-state sync/actions for the authenticated Railway admin door.
 - [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

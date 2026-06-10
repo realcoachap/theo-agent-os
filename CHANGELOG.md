@@ -18,6 +18,10 @@ Noted by Theo - 2026-06-09
 - `schemas/delivery.schema.json` and `bin/mouth-send-reply` validate outbound
   replies against their original trusted command before OpenClaw sends them,
   then record `jobs/outbox/<command_id>/sent.json` after delivery.
+- Railway admin door: `bin/glass --remote-admin` adds a single-operator login
+  with signed session cookie, while `scripts/start-glass-railway.sh` keeps
+  public read-only review mode as the default unless
+  `THEO_GLASS_REMOTE_ADMIN=1` is set.
 - Glass now renders read-only Mouth queue/operator state from
   `jobs/inbox/*/mouth.json` plus outbound reply records from
   `jobs/outbox/*/reply.json` and delivery markers from

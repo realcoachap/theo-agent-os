@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Theo Agent OS Glass Railway start v0.2.2 - Noted by Theo - 2026-06-10.
-# Runs the public review surface read-only on Railway's assigned port.
+# Theo Agent OS Glass Railway start v0.4.3 - Noted by Theo - 2026-06-10.
+# Runs the public review surface read-only by default; admin mode is env-gated.
 
 set -euo pipefail
 
@@ -11,4 +11,8 @@ if [[ ! -s runs/index.jsonl ]]; then
 fi
 
 python3 bin/operator-status || true
-python3 bin/glass --host 0.0.0.0 --port "${PORT:-4040}" --remote-review
+if [[ "${THEO_GLASS_REMOTE_ADMIN:-0}" == "1" ]]; then
+  python3 bin/glass --host 0.0.0.0 --port "${PORT:-4040}" --remote-admin
+else
+  python3 bin/glass --host 0.0.0.0 --port "${PORT:-4040}" --remote-review
+fi

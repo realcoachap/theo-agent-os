@@ -134,3 +134,7 @@ Irreversible actions require approval before execution.
 - Railway `--remote-review` mode is read-only and public-review oriented. It
   should serve demo-only run history by default; exposing real runs requires an
   explicit operator acknowledgement environment variable.
+- Railway `--remote-admin` mode is single-operator only. It requires
+  `THEO_GLASS_REMOTE_ADMIN=1`, admin credentials, and a session secret. It may
+  expose reviewed Glass writes after login, but still must not expose shell,
+  raw dispatch, pushes, OpenClaw proxying, or the Control UI link.

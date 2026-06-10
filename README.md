@@ -292,3 +292,25 @@ switch.
 
 Glass renders Mouth records as queue/operator state, but Glass still does not
 dispatch, retry, kill, push, or proxy OpenClaw.
+
+## Railway Admin Door
+
+The deployed Railway URL defaults to public read-only review mode. A
+single-operator admin login can be enabled only with explicit Railway secrets:
+
+```text
+THEO_GLASS_REMOTE_ADMIN=1
+THEO_GLASS_ADMIN_USER=coach
+THEO_GLASS_ADMIN_PASSWORD_HASH=<pbkdf2 hash>
+THEO_GLASS_ADMIN_SESSION_SECRET=<long random secret>
+```
+
+Generate the password hash locally:
+
+```bash
+printf '%s\n' '<admin-password>' | bin/glass --hash-admin-password
+```
+
+Admin mode uses a signed `HttpOnly` session cookie and keeps the Railway Control
+UI link hidden. It still does not expose raw shell, raw dispatch, git pushes, or
+OpenClaw proxying.
