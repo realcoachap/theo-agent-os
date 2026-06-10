@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.2.3 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.2.4 - Noted by Theo - 2026-06-10.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -32,6 +33,8 @@ RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
 REMOTE_REVIEW = False
+REMOTE_REVIEW_ACK_ENV = "THEO_GLASS_REMOTE_REVIEW_ACK"
+REMOTE_REVIEW_ACK_VALUE = "public-runs-ok"
 
 
 def utc_now() -> str:
@@ -117,6 +120,45 @@ def result_paths() -> list[Path]:
             if candidate.exists():
                 paths.add(candidate)
     return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def is_demo_run(result_path: Path, entry: dict[str, object] | None = None) -> bool:
+    """Keep public Railway review from accidentally exposing real run history."""
+    try:
+        result = read_json(result_path)
+    except Exception:
+        return False
+    if not isinstance(result, dict):
+        return False
+    run_dir = result_path.parent
+    job: dict[str, object] = {}
+    job_path = run_dir / "job.json"
+    if job_path.exists():
+        try:
+            maybe_job = read_json(job_path)
+            if isinstance(maybe_job, dict):
+                job = maybe_job
+        except Exception:
+            job = {}
+    worker = (entry or {}).get("worker") or job.get("worker") or artifact_worker(result)
+    task = str(job.get("task", ""))
+    summary = str(result.get("summary", ""))
+    return worker == "demo" and task.startswith("DEMO Shot 2 Glass fixture:") and summary.startswith("DEMO ONLY:")
+
+
+def remote_review_exposure_errors() -> list[str]:
+    """Return non-demo run paths that would be public in --remote-review mode."""
+    entries = index_entries()
+    errors: list[str] = []
+    for path in result_paths():
+        try:
+            result = read_json(path)
+            job_id = str(result.get("job_id", path.parent.name)) if isinstance(result, dict) else path.parent.name
+        except Exception:
+            job_id = path.parent.name
+        if not is_demo_run(path, entries.get(job_id)):
+            errors.append(f"{rel(path)} is not a demo-only run")
+    return errors
 
 
 def load_runs() -> list[dict[str, object]]:
@@ -876,6 +918,14 @@ def main() -> int:
     if args.host != "127.0.0.1" and not REMOTE_REVIEW:
         print("Glass refuses non-local bind values unless --remote-review is set.", file=sys.stderr)
         return 2
+    if REMOTE_REVIEW and os.environ.get(REMOTE_REVIEW_ACK_ENV) != REMOTE_REVIEW_ACK_VALUE:
+        exposure_errors = remote_review_exposure_errors()
+        if exposure_errors:
+            print("Glass remote-review refuses to expose non-demo run history.", file=sys.stderr)
+            print(f"Set {REMOTE_REVIEW_ACK_ENV}={REMOTE_REVIEW_ACK_VALUE} only if public run exposure is intended.", file=sys.stderr)
+            for error in exposure_errors:
+                print(f"- {error}", file=sys.stderr)
+            return 2
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Glass listening on http://{args.host}:{args.port}")
     try:

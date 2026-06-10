@@ -189,3 +189,13 @@ bash scripts/start-glass-railway.sh
 This mode binds to `0.0.0.0` for Railway, allows Railway Host headers, seeds
 demo Shot 2 runs when no run index exists, and disables Glass POST writes. It
 does not expose the local OpenClaw Control UI link.
+
+Public review mode refuses to serve non-demo run history unless the operator
+sets:
+
+```bash
+THEO_GLASS_REMOTE_REVIEW_ACK=public-runs-ok
+```
+
+That acknowledgement is intentionally noisy because real write runs may contain
+repo history, specs, artifacts, and security checklist state.

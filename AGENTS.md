@@ -75,6 +75,13 @@ Irreversible actions require approval before execution.
 - Adapters stay thin. They may emit `memory_proposals`, but never write memory.
 - Read-only adapters must not mutate target repos. Use run-local or temporary
   scratch space for generated analysis artifacts.
+- Write-capable adapters must run under `budget.max_minutes` enforcement, a
+  write-lane lock, and a denied-action log before Shot 3 can merge.
+- Denied adapter actions write JSONL rows to `RUN_DIR/blocked.log` shaped as
+  `{ts, tool, path_or_cmd, rule}`.
+- Worktree deny checks must resolve real paths before matching. `.git*` and
+  symlink paths into shared `.git` state are always blocked, even if a job has
+  write permission for ordinary source files.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
@@ -95,3 +102,6 @@ Irreversible actions require approval before execution.
 - `bin/operator-status` reads `OPENCLAW_UI_TOKEN` only from the calling
   environment, strips credential-like data, and writes only
   `runs/operator-status.json`.
+- Railway `--remote-review` mode is read-only and public-review oriented. It
+  should serve demo-only run history by default; exposing real runs requires an
+  explicit operator acknowledgement environment variable.

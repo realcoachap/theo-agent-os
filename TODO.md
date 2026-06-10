@@ -39,11 +39,19 @@ Noted by Theo - 2026-06-09
 ## 2026-06-10 Task: Shot 3 Hands Preflight
 
 - [x] Preserve Fable's Shot 3 forecast/advice in `docs/FABLE-SHOT3-PREFLIGHT.md`.
+- [x] Preserve Fable's scoped Shot 3 RISK review in
+  `docs/FABLE-SHOT3-RISK-REVIEW.md`.
 - [ ] Enforce adapter execution timeout from `budget.max_minutes`.
 - [ ] Add lane lockfile for write jobs with stale-lock detection.
-- [ ] Hard-block `.git*` writes inside worktrees.
-- [ ] Prove hook/path denial with relative and absolute path forms.
+- [ ] Define `blocked.log` as `RUN_DIR/blocked.log` JSONL rows with
+  `{ts, tool, path_or_cmd, rule}`.
+- [ ] Hard-block `.git*` writes inside worktrees after resolving real paths.
+- [ ] Prove hook/path denial with relative, absolute, and symlinked path forms.
+- [ ] Decide real-adapter `tests.passed` / `tests.failed` counting and preserve
+  raw test output as an artifact.
+- [ ] Ensure receipt undo commands use the actual worktree path.
 - [ ] Keep Aider `adapter_pending` unless credentials are available through
   `$VAR` env indirection.
 - [ ] Verify env acceptance tests A/B/C before claiming Shot 3 complete.
+- [ ] Delta-QA Railway review mode after Glass v0.2.4 demo-only public guard.
 - [ ] Render first write-run diff artifact in Glass.

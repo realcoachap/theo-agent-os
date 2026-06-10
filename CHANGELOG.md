@@ -10,9 +10,13 @@ Noted by Theo - 2026-06-09
   worker/security viewer, `bin/seed-demo` schema-valid fixtures,
   `bin/operator-status`, `registry/pinned-version.txt`, and
   `security/checklist.json`.
+- Fable's scoped Shot 3 RISK review, including the realpath/symlink trapdoor,
+  `blocked.log` contract, lane-lock, timeout, and write-run QA gates.
 
 ### Fixed
 
+- Refuse Railway remote-review mode when real non-demo run history is present
+  unless the operator explicitly acknowledges public exposure.
 - Let `bin/operator-status` write a degraded status snapshot when the
   OpenClaw CLI is absent instead of crashing before Glass can render.
 - Refuse duplicate `job_id` values cleanly before run creation instead of
