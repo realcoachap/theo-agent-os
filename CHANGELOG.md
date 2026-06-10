@@ -22,6 +22,9 @@ Noted by Theo - 2026-06-09
 - Fable's full Shot 3 Hands QA RISK artifact for commit `88503e6`, preserving
   the live-execution evidence and the diff-capture defect that `e2c28e8`
   superseded.
+- Fable's final Shot 3 Hands QA PASS artifact for
+  `shot3-hands-v0.3.1` / `e2c28e8`, confirming canonical evidence run
+  `runs/2026-06-10/d43c7251-2b35-4bdb-8132-9a4f96a31bd7`.
 
 ### Fixed
 

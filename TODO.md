@@ -66,3 +66,14 @@ Noted by Theo - 2026-06-09
   write-run evidence checks.
 - [x] Commit, push, deploy Glass if needed, and hand Fable a pinned commit plus
   a named selftest run directory.
+
+## 2026-06-10 Task: Shot 3 Hands QA Closeout
+
+- [x] Fix Fable's diff-capture RISK by including tracked, staged, and
+  untracked/symlink changes in `diff.patch`.
+- [x] Tag `shot3-hands-v0.3.1`.
+- [x] Preserve Fable's final PASS artifact in
+  `docs/FABLE-SHOT3-HANDS-QA-PASS.md`.
+- [ ] Add one explicit partial-status fixture.
+- [ ] Run first live `THEO_ENABLE_REAL_CLAUDE=1` session in a throwaway lane
+  when token spend is approved.
