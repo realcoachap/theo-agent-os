@@ -53,10 +53,10 @@
       "kind": "cli",
       "binary": ".sandbox/hermes-venv/bin/hermes",
       "status": "sandbox",
+      "installed_version": "0.16.0",
       "strengths": ["memory-experiment", "skill-experiment", "scheduled-agent-scout"],
       "permission_ceiling": "read_only",
       "cost_tier": "unknown"
     }
   ]
 }
-

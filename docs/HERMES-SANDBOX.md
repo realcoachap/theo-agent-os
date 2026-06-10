@@ -33,6 +33,20 @@ export HERMES_HOME="$PWD/.sandbox/hermes-home"
 .sandbox/hermes-venv/bin/hermes --help
 ```
 
+## Installed State
+
+Verified on 2026-06-09:
+
+- Package: `hermes-agent`
+- Version: `0.16.0`
+- Hermes release string: `Hermes Agent v0.16.0 (2026.6.5)`
+- Binary: `.sandbox/hermes-venv/bin/hermes`
+- Home: `.sandbox/hermes-home`
+- Gateway: stopped
+- Messaging platforms: not configured
+- Scheduled jobs: `0`
+- Active sessions: `0`
+
 ## Allowed During Scout
 
 - CLI help/version/doctor.
@@ -68,4 +82,3 @@ Hermes earns more access only if it does something our current stack cannot do:
 - OpenBrain
 
 Until then, it stays sandboxed.
-
