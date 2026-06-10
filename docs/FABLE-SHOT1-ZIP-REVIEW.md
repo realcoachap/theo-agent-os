@@ -1,4 +1,4 @@
-# Fable Shot 1 ZIP Review v0.1.0
+# Fable Shot 1 ZIP Review v0.1.1
 
 Noted by Theo - 2026-06-09
 
@@ -27,7 +27,7 @@ The canonical implementation remains:
 
 ```text
 realcoachap/theo-agent-os
-commit a97f536
+commit 25bd02e plus review/fix follow-ups
 ```
 
 Our Shot 1 is stricter and safer because it:
@@ -105,3 +105,15 @@ No code merge from the ZIP tonight.
 Keep `theo-agent-os` Shot 1 as canonical, and revisit `lib/envelope.py` as a
 small refactor only if Shot 2/3 makes dispatch too large to reason about.
 
+## Fable Review Of Theo ZIP
+
+After reviewing Theo's canonical ZIP, Fable agreed this repo should remain
+canonical and flagged four useful fixes before Shot 3:
+
+- `env_profile` needed worker-specific caller variable indirection for
+  `claude-glm`.
+- Dispatch exit codes should be documented as the standard for Shot 4.
+- A labeled stub path is useful on machines without Graphify.
+- Duplicate schema aliases and duplicate example-job paths should be removed.
+
+Those fixes were applied as Shot 1.1 follow-up work.

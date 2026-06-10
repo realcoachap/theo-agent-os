@@ -63,6 +63,10 @@ Irreversible actions require approval before execution.
 - `schemas/job.schema.json` and `schemas/result.schema.json` are the active
   Shot 1 contracts.
 - `registry/workers.json` is the only worker manifest.
+- `env_profile` maps adapter env var -> caller env var. Do not map every worker
+  to shared `ANTHROPIC_*` names when worker-specific lanes need separate keys.
+- Dispatch exit codes are canonical: `0` success, `2` validation/semantic
+  rejection, `3` blocked, `4` failed, `5` partial.
 - `runs/` is append-only generated history; never edit past result envelopes.
 - Adapters stay thin. They may emit `memory_proposals`, but never write memory.
 - Read-only adapters must not mutate target repos. Use run-local or temporary

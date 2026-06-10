@@ -10,3 +10,11 @@ Noted by Theo - 2026-06-09
 - [x] Add examples, run layout, and graph hook.
 - [x] Verify positive and negative paths.
 - [x] Commit and push.
+
+## 2026-06-09 Task: Fable Shot 1 Review Patches
+
+- [x] Fix worker-specific env indirection for `claude-glm`.
+- [x] Document canonical dispatch exit codes.
+- [x] Add labeled Graphify stub mode.
+- [x] Remove duplicate schema aliases and example directory.
+- [x] Verify and push.

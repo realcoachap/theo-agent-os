@@ -51,8 +51,6 @@ hooks/
 schemas/
   job.schema.json
   result.schema.json
-  job-envelope.schema.json
-  result-envelope.schema.json
 registry/
   workers.json
 jobs/
@@ -95,6 +93,31 @@ bin/receipt runs/<date>/<job_id>/result.json
 
 `adapters/graphify.sh` builds a run-local Graphify graph from a temporary copy,
 so target repos are not mutated by read-only map jobs.
+
+## Shot 1 Canon
+
+Status exit codes are part of the Foundry contract:
+
+- `success` -> `0`
+- validation or semantic rejection before a run exists -> `2`
+- `blocked` -> `3`
+- `failed` -> `4`
+- `partial` -> `5`
+
+`registry/workers.json` stores worker-specific environment indirection. Keys
+are the adapter environment variable names; values are the caller environment
+variable names. Example: `claude-glm` maps `ANTHROPIC_BASE_URL` from
+`ANTHROPIC_BASE_URL_GLM` so multiple Anthropic-compatible lanes can coexist
+without clobbering each other's credentials.
+
+Graphify has a labeled demo mode for machines without the CLI:
+
+```bash
+GRAPHIFY_STUB=1 bin/dispatch jobs/examples/map-self.json
+```
+
+Stub results prove envelope plumbing only. Real map jobs must use the Graphify
+CLI before any write worker consumes graph context.
 
 ## Fable Prompt Pack
 

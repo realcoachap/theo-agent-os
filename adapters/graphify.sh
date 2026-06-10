@@ -1,8 +1,76 @@
 #!/usr/bin/env bash
-# Theo Agent OS Graphify adapter v0.1.0 - Noted by Theo - 2026-06-09
+# Theo Agent OS Graphify adapter v0.1.1 - Noted by Theo - 2026-06-09
 # Read-only map worker. It copies the lane into temporary scratch before
 # Graphify writes graph artifacts, then copies durable outputs into the run.
 set -euo pipefail
+
+if [[ "${GRAPHIFY_STUB:-0}" == "1" ]]; then
+  python3 - <<'PY'
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
+
+job = json.loads(Path(os.environ["JOB_PATH"]).read_text())
+run_dir = Path(os.environ["RUN_DIR"])
+run_rel = os.environ["RUN_DIR_REL"]
+lane = Path(os.environ["LANE_PATH"]).resolve()
+started = float(os.environ.get("STARTED_EPOCH", time.time()))
+graph_dir = run_dir / "graphify-out"
+graph_dir.mkdir(parents=True, exist_ok=True)
+head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=lane, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+head = head_proc.stdout.strip() if head_proc.returncode == 0 else ""
+branch_proc = subprocess.run(["git", "branch", "--show-current"], cwd=lane, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+(graph_dir / ".head").write_text(head + "\n", encoding="utf-8")
+(graph_dir / "graph.json").write_text(json.dumps({"stub": True, "lane": str(lane), "head": head}, indent=2) + "\n", encoding="utf-8")
+(run_dir / "graph-answer.md").write_text(
+    "# Graphify Stub Answer\n\n"
+    "GRAPHIFY_STUB=1 was set, so this is a labeled demo result. No target repo files were changed.\n",
+    encoding="utf-8",
+)
+(run_dir / "transcript.md").write_text("GRAPHIFY_STUB=1; skipped real graphify CLI.\n", encoding="utf-8")
+result = {
+    "job_id": job["job_id"],
+    "status": "success",
+    "state": "review",
+    "summary": "Graphify stub mode produced a labeled demo result without mutating the target repo.",
+    "diff": None,
+    "files_touched": [],
+    "tests": {"ran": False, "passed": 0, "failed": 0},
+    "git": {"branch": branch, "dirty": False, "commits": [head] if head else []},
+    "transcript": f"{run_rel}/transcript.md",
+    "artifacts": [
+        {
+            "artifact_type": "report",
+            "title": "Graphify stub answer",
+            "summary": "Labeled demo answer generated because GRAPHIFY_STUB=1 was set.",
+            "path": f"{run_rel}/graph-answer.md",
+            "preview_kind": "text",
+            "worker": "graphify",
+            "source_job": job["job_id"],
+            "safe_to_render": True
+        },
+        {
+            "artifact_type": "data",
+            "title": "Stub graph.json",
+            "summary": "Minimal demo graph stamp for machines without Graphify.",
+            "path": f"{run_rel}/graphify-out/graph.json",
+            "preview_kind": "none",
+            "worker": "graphify",
+            "source_job": job["job_id"],
+            "safe_to_render": False
+        }
+    ],
+    "memory_proposals": [],
+    "followups": ["Install Graphify for a real repo map before trusting analysis output."],
+    "cost": {"tokens": 0, "minutes": round((time.time() - started) / 60, 3)}
+}
+(run_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  exit 0
+fi
 
 if ! command -v graphify >/dev/null 2>&1; then
   python3 - <<'PY'
