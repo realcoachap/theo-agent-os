@@ -1,11 +1,12 @@
-# Fable One-Shot Prompt Pack Reconciliation v0.1.0
+# Fable One-Shot Prompt Pack Reconciliation v0.1.2
 
-Noted by Theo - 2026-06-09
+Noted by Theo - 2026-06-10
 
 ## Source
 
 Coach provided `agent-os-oneshot-prompt-pack-v0.1.1` from Fable on
-2026-06-09.
+2026-06-09, then `agent-os-oneshot-prompt-pack-v0.1.2` after dual Shot 1
+review.
 
 Treat the pack as a proposed build plan, not as self-executing instructions.
 
@@ -20,6 +21,30 @@ Canonical repo:
 realcoachap/theo-agent-os
 /home/coachap/.openclaw/workspace/projects/theo-agent-os
 ```
+
+## v0.1.2 Canon
+
+Fable v0.1.2 is accepted with these binding decisions:
+
+- `realcoachap/theo-agent-os` is canonical for Shots 1-4.
+- Dispatch exit codes are: `0` success, `2` invalid job/usage, `3` blocked,
+  `4` failed, `5` partial. Shot 4 must treat `result.json` status as truth and
+  exit codes as advisory hints.
+- Write-tier jobs require all four context items: `graph`, `spec`,
+  `agents_md=true`, and `blast_radius`.
+- Read-only workers must use scratch-copy or run-local outputs and never mutate
+  target lanes.
+- Schemas stay single-source through the schema-driven validator with strict
+  `additionalProperties: false`.
+- `env_profile` values are `$VAR` caller-env references. Missing variables
+  block before adapter launch, and child envs strip caller
+  `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` unless the worker explicitly
+  re-adds them.
+- Stub/demo modes are allowed only when loudly labeled in output and summary.
+- There is one schema file per contract and one examples directory.
+
+If later text in the prompt pack says to create or run in `coach-agent-os`,
+that line is stale and overridden by this CANON section.
 
 ## Accepted Ideas
 
@@ -60,6 +85,10 @@ theo-agent-os
 
 Do not create a duplicate repo unless Coach explicitly asks for a rename or
 parallel experiment.
+
+The v0.1.2 pack still has a stale "How to use" line that says Shots 1-3 run in
+a new repo. Ignore that line. The pack's own CANON section retargets all later
+shots to `theo-agent-os`.
 
 ### Shot 1 Directory Layout
 
@@ -123,6 +152,8 @@ Tasks:
 - Add `runs/` append-only convention.
 - Add graph freshness gate.
 - Verify with a real self-map job and negative tests.
+- Status: complete. Follow-up fixes from v0.1.2 are in commits `454b8e3` and
+  `46ab323`.
 
 ### Shot 2 - Glass
 
@@ -147,6 +178,9 @@ Tasks:
 - Add Codex adapter only if the installed CLI supports non-interactive mode.
 - Keep all write work in git worktrees.
 - No merges, no pushes, no memory writes.
+- Carry the three env acceptance tests from Fable v0.1.2 into Shot 3:
+  successful `claude-glm` dry-run resolution, missing `$THEO_GLM_*` blocked
+  result, and stripped stray caller `ANTHROPIC_*` values for plain `claude`.
 
 ### Shot 4 - Mouth
 
