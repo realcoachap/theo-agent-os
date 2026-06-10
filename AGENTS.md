@@ -62,6 +62,8 @@ Irreversible actions require approval before execution.
 
 - `schemas/job.schema.json` and `schemas/result.schema.json` are the active
   Shot 1 contracts.
+- `schemas/command.schema.json` is the active Shot 4 phone/OpenClaw intake
+  contract. Mouth commands compile into jobs; they do not replace jobs.
 - `registry/workers.json` is the only worker manifest.
 - `env_profile` maps adapter env var -> `$CALLER_ENV_VAR`. Dispatch must block
   when a referenced caller variable is missing.
@@ -86,6 +88,11 @@ Irreversible actions require approval before execution.
   enabled by the matching `THEO_ENABLE_REAL_*` environment switch. Selftest
   mode may prove dispatch, worktree, denial, diff, and receipt behavior without
   spending model tokens.
+- `bin/mouth` is the only reviewed command-intake bridge in this repo. It must
+  reject raw chat-to-shell behavior, keep `git_push=false`, keep `network=false`
+  until a later reviewed lane exists, require trusted source plus explicit
+  write approval for write dispatch, and reuse `bin/receipt` for operator
+  replies.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
@@ -96,6 +103,9 @@ Irreversible actions require approval before execution.
   artifacts. It must refuse non-`127.0.0.1` binds.
 - Glass never dispatches jobs, retries jobs, kills jobs, pushes code, proxies
   OpenClaw, or iframes the Control UI.
+- Glass may display Mouth records from `jobs/inbox/*/mouth.json`, but this is a
+  read surface only. Mouth execution stays in `bin/mouth` and dispatch stays in
+  `bin/dispatch`.
 - The only Glass writes are:
   - append-only memory verdict entries in `memory/queue.jsonl`
   - manual checklist attestations in `security/checklist.json`

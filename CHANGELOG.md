@@ -6,6 +6,13 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Shot 4 Mouth intake: `schemas/command.schema.json`, `bin/mouth`, and
+  `jobs/examples/mouth-shot4-selftest.json` compile trusted phone/OpenClaw
+  commands into canonical `job.json` envelopes, optionally dispatch them
+  through Foundry, and return existing receipt text without creating a raw
+  chat-to-shell lane.
+- Glass now renders read-only Mouth queue/operator state from
+  `jobs/inbox/*/mouth.json`.
 - Shot 3 Hands dispatch rails: `budget.max_minutes` adapter timeout with
   SIGTERM/SIGKILL escalation, per-lane write lockfiles in `runs/locks/`, stale
   lock recovery, and `RUN_DIR/blocked.log` JSONL denied-action evidence.

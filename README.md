@@ -42,6 +42,7 @@ docs/
 bin/
   dispatch
   glass
+  mouth
   operator-status
   receipt
   seed-demo
@@ -58,6 +59,7 @@ fixtures/
 hooks/
   post-commit
 schemas/
+  command.schema.json
   job.schema.json
   result.schema.json
 registry/
@@ -65,6 +67,7 @@ registry/
   workers.json
 jobs/
   examples/
+  inbox/
 runs/
   .gitkeep
 security/
@@ -225,3 +228,25 @@ operator explicitly sets `THEO_ENABLE_REAL_CODEX=1` or
 `THEO_ENABLE_REAL_AIDER=1`. Real Claude execution is likewise gated by
 `THEO_ENABLE_REAL_CLAUDE=1`; selftest mode uses `THEO_ADAPTER_SELFTEST=1` and
 does not spend model tokens.
+
+## Shot 4 Mouth
+
+Mouth is the first controlled phone-command intake:
+
+```bash
+bin/mouth jobs/examples/mouth-shot4-selftest.json
+bin/mouth --dispatch --receipt jobs/examples/mouth-shot4-selftest.json
+```
+
+It validates `schemas/command.schema.json`, writes a canonical job envelope to
+`jobs/inbox/<command_id>/job.json`, optionally calls `bin/dispatch`, and returns
+the existing `bin/receipt` text. It does not execute raw chat text, accept
+arbitrary shell verify commands, or bypass dispatch safety gates.
+
+`execution.mode=draft` compiles only. `dispatch_selftest` sets
+`THEO_ADAPTER_SELFTEST=1` and spends no model tokens. `dispatch_real` requires
+the command's spend approval and the worker's existing `THEO_ENABLE_REAL_*`
+switch.
+
+Glass renders Mouth records as queue/operator state, but Glass still does not
+dispatch, retry, kill, push, or proxy OpenClaw.

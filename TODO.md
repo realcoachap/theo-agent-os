@@ -77,3 +77,17 @@ Noted by Theo - 2026-06-09
 - [ ] Add one explicit partial-status fixture.
 - [ ] Run first live `THEO_ENABLE_REAL_CLAUDE=1` session in a throwaway lane
   when token spend is approved.
+
+## 2026-06-10 Task: Shot 4 Mouth
+
+- [x] Define the Shot 4 preflight and merge gates in
+  `docs/SHOT4-MOUTH-PREFLIGHT.md`.
+- [x] Add `schemas/command.schema.json` for structured phone/OpenClaw command
+  intake.
+- [x] Add `bin/mouth` to compile commands into canonical `job.json` envelopes.
+- [x] Keep dispatch behind a second local `--dispatch` gate and block draft
+  commands from execution.
+- [x] Reuse `bin/receipt` for operator reply text.
+- [x] Add Glass read-only Mouth queue/operator state.
+- [ ] Wire the external OpenClaw/Telegram wrapper to call `bin/mouth`.
+- [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

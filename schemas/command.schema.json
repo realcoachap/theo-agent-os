@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/command.schema.json",
+  "title": "Theo Agent OS Mouth Command Envelope",
+  "description": "Theo Agent OS v0.4.0 - Noted by Theo - 2026-06-10. Phone/OpenClaw intake contract for compiling operator commands into canonical job envelopes.",
+  "type": "object",
+  "required": ["command_id", "source", "execution", "lane", "intent", "worker", "task", "context", "permissions", "verify_profile", "budget", "approvals", "delivery"],
+  "additionalProperties": false,
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "source": {
+      "type": "object",
+      "required": ["channel", "trusted", "sender_label", "received_at"],
+      "additionalProperties": false,
+      "properties": {
+        "channel": {"type": "string", "enum": ["telegram", "openclaw", "cli", "test"]},
+        "chat_id": {"type": "string"},
+        "message_id": {"type": "string"},
+        "sender_id": {"type": "string"},
+        "sender_label": {"type": "string", "minLength": 1},
+        "trusted": {"type": "boolean"},
+        "received_at": {"type": "string", "minLength": 1}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["draft", "dispatch_selftest", "dispatch_real"]}
+      }
+    },
+    "lane": {"type": "string", "minLength": 1},
+    "intent": {"type": "string", "enum": ["build", "patch", "research", "review", "map", "content", "propose"]},
+    "worker": {"type": "string", "minLength": 1},
+    "model_profile": {"type": "string"},
+    "task": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "graph": {"type": "string"},
+        "spec": {"type": "string"},
+        "agents_md": {"type": "boolean"},
+        "blast_radius": {"type": "string"}
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "required": ["tier", "write", "deny", "network", "git_push"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": {"type": "string", "enum": ["read_only", "write_sandboxed", "write_trusted"]},
+        "write": {"type": "array", "items": {"type": "string"}},
+        "deny": {"type": "array", "items": {"type": "string"}},
+        "network": {"type": "boolean"},
+        "git_push": {"type": "boolean"}
+      }
+    },
+    "verify_profile": {
+      "type": "string",
+      "enum": ["none", "schema_smoke", "shot3_selftest"]
+    },
+    "budget": {
+      "type": "object",
+      "required": ["max_minutes", "max_tokens"],
+      "additionalProperties": false,
+      "properties": {
+        "max_minutes": {"type": "integer", "minimum": 1},
+        "max_tokens": {"type": "integer", "minimum": 1}
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "required": ["operator", "write", "spend"],
+      "additionalProperties": false,
+      "properties": {
+        "operator": {"type": "boolean"},
+        "write": {"type": "boolean"},
+        "spend": {"type": "boolean"}
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "required": ["reply"],
+      "additionalProperties": false,
+      "properties": {
+        "reply": {"type": "string", "enum": ["none", "receipt_text"]},
+        "target": {"type": "string"}
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "command_id": "44444444-4444-4444-8444-444444444444",
+  "source": {
+    "channel": "test",
+    "trusted": true,
+    "sender_label": "Shot 4 selftest fixture",
+    "received_at": "2026-06-10T14:00:00Z"
+  },
+  "execution": {
+    "mode": "dispatch_selftest"
+  },
+  "lane": "self",
+  "intent": "patch",
+  "worker": "claude",
+  "model_profile": "default",
+  "task": "Run the Shot 3 selftest boundary through the Shot 4 Mouth intake path.",
+  "context": {
+    "graph": "graphify-out/graph.json",
+    "spec": "docs/SHOT4-MOUTH-PREFLIGHT.md",
+    "agents_md": true,
+    "blast_radius": "Mouth selftest may touch only the dispatch-created worktree fixture paths."
+  },
+  "permissions": {
+    "tier": "write_sandboxed",
+    "write": ["fixtures/**"],
+    "deny": [".env*", "secrets/**"],
+    "network": false,
+    "git_push": false
+  },
+  "verify_profile": "shot3_selftest",
+  "budget": {
+    "max_minutes": 1,
+    "max_tokens": 1000
+  },
+  "approvals": {
+    "operator": true,
+    "write": true,
+    "spend": false
+  },
+  "delivery": {
+    "reply": "receipt_text"
+  }
+}

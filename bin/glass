@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.2.4 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.4.0 - Noted by Theo - 2026-06-10.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNS = REPO_ROOT / "runs"
+MOUTH_INBOX = REPO_ROOT / "jobs" / "inbox"
 MEMORY_QUEUE = REPO_ROOT / "memory" / "queue.jsonl"
 SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
@@ -378,6 +379,22 @@ def workers() -> dict[str, object]:
     return {"registry": registry, "operator": operator_status()}
 
 
+def mouth_commands() -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    if not MOUTH_INBOX.exists():
+        return records
+    for path in sorted(MOUTH_INBOX.glob("*/mouth.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            data = read_json(path)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            row = dict(data)
+            row["record_path"] = rel(path)
+            records.append(row)
+    return records
+
+
 def state() -> dict[str, object]:
     runs = load_runs()
     return {
@@ -389,6 +406,7 @@ def state() -> dict[str, object]:
         "repo_maps": repo_maps(runs),
         "specs": specs(runs),
         "memory_proposals": memory_proposals(runs),
+        "mouth": mouth_commands(),
         "workers": workers(),
         "security": security_checklist(),
         "control_ui_url": "" if REMOTE_REVIEW else "http://127.0.0.1:18789",
@@ -545,7 +563,7 @@ pre {
 <nav class="tabs" id="tabs"></nav>
 <main id="app"></main>
 <script>
-const tabs = ["Runs", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
+const tabs = ["Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
 let current = "Runs";
 let appState = null;
 
@@ -638,6 +656,18 @@ function artifactCard(a) {
 function renderArtifacts() {
   return `<section class="grid">${(appState.artifacts || []).map(artifactCard).join("") || empty("No artifacts yet.")}</section>`;
 }
+function renderMouth() {
+  return `<section class="grid">${(appState.mouth || []).map(m => `<article class="card">
+    <div class="row"><div class="title mono">${esc(short(m.command_id))}</div><span class="pill ${esc(m.state)}">${esc(m.state)}</span></div>
+    <div class="subtle">${esc((m.source || {}).channel)} / ${esc((m.source || {}).sender_label)} / ${esc(m.mode)}</div>
+    <p>${esc(m.summary)}</p>
+    <div class="mono subtle">job ${esc(short(m.job_id))}</div>
+    ${m.result_path ? `<div class="mono subtle">result ${esc(m.result_path)}</div>` : ""}
+    ${m.receipt_preview ? `<h3>Receipt</h3><pre>${esc(m.receipt_preview)}</pre>` : ""}
+    <div class="subtle">${esc(m.record_path || "")}</div>
+    <div class="blocked-box">Glass displays Mouth state only; dispatch still happens through bin/mouth + bin/dispatch.</div>
+  </article>`).join("") || empty("No Mouth commands yet.")}</section>`;
+}
 function renderRepoMaps() {
   return `<section class="grid">${(appState.repo_maps || []).map(m => `<article class="card">
     <div class="row"><div class="title">${esc(m.lane)}</div><span class="pill ${m.fresh ? "success" : "blocked"}">${m.fresh ? "FRESH" : "STALE"}</span></div>
@@ -719,6 +749,7 @@ function render() {
   if (!appState) return;
   const renderers = {
     "Runs": renderRuns,
+    "Mouth": renderMouth,
     "Artifacts": renderArtifacts,
     "Repo Maps": renderRepoMaps,
     "Specs": renderSpecs,

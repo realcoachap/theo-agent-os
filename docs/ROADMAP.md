@@ -42,9 +42,13 @@ Noted by Theo - 2026-06-09
 ## Phase 5 - Mouth
 
 - Add OpenClaw operator skill after hardening is green.
-- Convert human intent into job envelopes.
+- Convert structured human intent into job envelopes.
 - Require explicit confirmation for write/delete/spend/publish/push.
 - Schedule read-only morning brief via OpenClaw native cron.
+
+Shot 4 starts this phase with `schemas/command.schema.json` and `bin/mouth`:
+phone/OpenClaw commands compile into `jobs/inbox/<command_id>/job.json`, then
+optionally run through dispatch and return the existing receipt text.
 
 ## Phase 6 - Sandboxed Experiments
 

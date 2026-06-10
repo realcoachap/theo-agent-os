@@ -9,6 +9,8 @@
 runs/*
 !runs/.gitkeep
 memory/queue.jsonl
+jobs/inbox/*
+!jobs/inbox/.gitkeep
 graphify-out/
 !jobs/examples/stale-graph/graphify-out/
 !jobs/examples/stale-graph/graphify-out/.head
