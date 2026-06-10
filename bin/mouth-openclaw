@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Theo Agent OS OpenClaw/Telegram Mouth wrapper v0.4.1 - Noted by Theo - 2026-06-10.
+
+Turn a sanitized OpenClaw/Telegram event into `schemas/command.schema.json` and
+hand it to `bin/mouth`. This is the reviewed edge between phone text and the
+dispatcher: event metadata is never trusted by itself, raw chat text is only a
+task string, and execution still requires Mouth plus dispatch gates.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PREFIXES = ("/theo", "theo:", "theo")
+DEFAULT_DENY = [".env*", "secrets/**"]
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def list_from_env(name: str) -> set[str]:
+    raw = os.environ.get(name, "")
+    return {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+
+
+def nested(data: Any, *keys: str) -> Any:
+    value = data
+    for key in keys:
+        if not isinstance(value, dict):
+            return ""
+        value = value.get(key, "")
+    return value
+
+
+def first_text(data: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def sender_label(event: dict[str, Any]) -> str:
+    sender = event.get("sender")
+    if isinstance(sender, dict):
+        for key in ("label", "name", "username", "id"):
+            value = sender.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(sender, str) and sender.strip():
+        return sender.strip()
+    return first_text(event, ("sender_label", "sender_name", "from", "sender_id")) or "unknown"
+
+
+def event_channel(event: dict[str, Any]) -> str:
+    raw = first_text(event, ("channel", "surface", "provider")) or "openclaw"
+    if raw == "telegram":
+        return "telegram"
+    if raw in {"cli", "test", "openclaw"}:
+        return raw
+    return "openclaw"
+
+
+def event_text(event: dict[str, Any]) -> str:
+    text = first_text(event, ("text", "message", "content", "current_user_request", "body"))
+    if text:
+        return text
+    message = event.get("message")
+    if isinstance(message, dict):
+        return first_text(message, ("text", "caption", "content", "body"))
+    return ""
+
+
+def extract_task(raw_text: str, direct_chat: bool, prefixes: tuple[str, ...]) -> str:
+    text = raw_text.strip()
+    if not text:
+        raise ValueError("event contains no text to route")
+    lowered = text.lower()
+    for prefix in prefixes:
+        normalized = prefix.lower().strip()
+        if not normalized:
+            continue
+        if lowered == normalized:
+            raise ValueError("command prefix was present but task text was empty")
+        if lowered.startswith(normalized + " "):
+            return text[len(normalized):].strip()
+        if normalized.endswith(":") and lowered.startswith(normalized):
+            return text[len(normalized):].strip()
+    if direct_chat:
+        return text
+    raise ValueError("message must start with a reviewed Mouth prefix such as /theo")
+
+
+def is_trusted(event: dict[str, Any], args: argparse.Namespace) -> bool:
+    channel = event_channel(event)
+    if channel == "test":
+        return True
+    sender_id = str(event.get("sender_id") or nested(event, "sender", "id") or "")
+    chat_id = str(event.get("chat_id") or nested(event, "chat", "id") or "")
+    trusted_senders = set(args.trusted_sender) | list_from_env("THEO_TRUSTED_TELEGRAM_IDS")
+    trusted_chats = set(args.trusted_chat) | list_from_env("THEO_TRUSTED_TELEGRAM_CHATS")
+    return bool((sender_id and sender_id in trusted_senders) or (chat_id and chat_id in trusted_chats))
+
+
+def build_command(event: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    task = args.task or extract_task(event_text(event), args.direct_chat, tuple(args.prefix))
+    trusted = is_trusted(event, args)
+    mode = args.mode
+    write_patterns = list(args.write)
+    deny_patterns = list(dict.fromkeys(DEFAULT_DENY + list(args.deny)))
+    verify_profile = args.verify_profile
+    graph = args.graph
+    spec = args.spec
+    blast_radius = args.blast_radius
+    budget_minutes = args.budget_minutes
+    budget_tokens = args.budget_tokens
+    tier = args.tier
+
+    if args.selftest_fixture:
+        mode = "dispatch_selftest" if args.mode == "draft" else args.mode
+        tier = tier or "write_sandboxed"
+        write_patterns = write_patterns or ["fixtures/**"]
+        verify_profile = "shot3_selftest"
+        graph = graph or "graphify-out/graph.json"
+        spec = spec or "docs/SHOT4-MOUTH-PREFLIGHT.md"
+        blast_radius = blast_radius or "OpenClaw wrapper selftest may touch only dispatch-created worktree fixture paths."
+        budget_minutes = min(budget_minutes, 1)
+        budget_tokens = min(budget_tokens, 1000)
+
+    tier = tier or ("write_sandboxed" if write_patterns else "read_only")
+    graph = graph or ""
+    spec = spec or ""
+    context = {
+        "agents_md": True,
+        "blast_radius": blast_radius or "OpenClaw wrapper command; dispatch permissions define the actual blast radius.",
+    }
+    if graph:
+        context["graph"] = graph
+    if spec:
+        context["spec"] = spec
+
+    source = {
+        "channel": event_channel(event),
+        "chat_id": str(event.get("chat_id") or nested(event, "chat", "id") or ""),
+        "message_id": str(event.get("message_id") or nested(event, "message", "id") or ""),
+        "sender_id": str(event.get("sender_id") or nested(event, "sender", "id") or ""),
+        "sender_label": sender_label(event),
+        "trusted": trusted,
+        "received_at": str(event.get("timestamp") or event.get("received_at") or utc_now()),
+    }
+    return {
+        "command_id": str(uuid.uuid4()),
+        "source": source,
+        "execution": {"mode": mode},
+        "lane": args.lane,
+        "intent": args.intent,
+        "worker": args.worker,
+        "model_profile": args.model_profile,
+        "task": task,
+        "context": context,
+        "permissions": {
+            "tier": tier,
+            "write": write_patterns,
+            "deny": deny_patterns,
+            "network": bool(args.network),
+            "git_push": bool(args.git_push),
+        },
+        "verify_profile": verify_profile,
+        "budget": {"max_minutes": budget_minutes, "max_tokens": budget_tokens},
+        "approvals": {
+            "operator": trusted,
+            "write": bool(args.approve_write or args.selftest_fixture),
+            "spend": bool(args.approve_spend),
+        },
+        "delivery": {"reply": args.reply, "target": str(event.get("chat_id") or nested(event, "chat", "id") or "")},
+    }
+
+
+def call_mouth(command: dict[str, Any], args: argparse.Namespace) -> int:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="theo-mouth-openclaw-", delete=False) as handle:
+        json.dump(command, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        command_path = Path(handle.name)
+    cmd = [str(REPO_ROOT / "bin" / "mouth")]
+    if args.dispatch:
+        cmd.append("--dispatch")
+    if args.receipt:
+        cmd.append("--receipt")
+    if args.json:
+        cmd.append("--json")
+    cmd.append(str(command_path))
+    proc = subprocess.run(cmd, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.stdout:
+        print(proc.stdout.rstrip())
+    if proc.stderr:
+        print(proc.stderr.rstrip(), file=sys.stderr)
+    return proc.returncode
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Route an OpenClaw/Telegram event through Theo Mouth.")
+    parser.add_argument("--event", required=True, help="Path to sanitized OpenClaw/Telegram event JSON.")
+    parser.add_argument("--direct-chat", action="store_true", help="Allow the whole event text as task without a /theo prefix.")
+    parser.add_argument("--prefix", action="append", default=list(DEFAULT_PREFIXES), help="Accepted command prefix. Repeatable.")
+    parser.add_argument("--trusted-sender", action="append", default=[], help="Trusted sender id. Env: THEO_TRUSTED_TELEGRAM_IDS.")
+    parser.add_argument("--trusted-chat", action="append", default=[], help="Trusted chat id. Env: THEO_TRUSTED_TELEGRAM_CHATS.")
+    parser.add_argument("--task", default="", help="Override task text instead of reading event text.")
+    parser.add_argument("--mode", choices=["draft", "dispatch_selftest", "dispatch_real"], default="draft")
+    parser.add_argument("--dispatch", action="store_true", help="Ask bin/mouth to dispatch after compiling.")
+    parser.add_argument("--json", action="store_true", help="Print Mouth JSON output.")
+    parser.add_argument("--receipt", action="store_true", help="Print receipt text after dispatch.")
+    parser.add_argument("--selftest-fixture", action="store_true", help="Use the Shot 4 no-spend fixture policy.")
+    parser.add_argument("--lane", default="self")
+    parser.add_argument("--intent", choices=["build", "patch", "research", "review", "map", "content", "propose"], default="patch")
+    parser.add_argument("--worker", default="claude")
+    parser.add_argument("--model-profile", default="default")
+    parser.add_argument("--tier", choices=["read_only", "write_sandboxed", "write_trusted"])
+    parser.add_argument("--write", action="append", default=[])
+    parser.add_argument("--deny", action="append", default=[])
+    parser.add_argument("--network", action="store_true")
+    parser.add_argument("--git-push", action="store_true")
+    parser.add_argument("--graph", default="")
+    parser.add_argument("--spec", default="")
+    parser.add_argument("--blast-radius", default="")
+    parser.add_argument("--verify-profile", choices=["none", "schema_smoke", "shot3_selftest"], default="none")
+    parser.add_argument("--budget-minutes", type=int, default=5)
+    parser.add_argument("--budget-tokens", type=int, default=2000)
+    parser.add_argument("--approve-write", action="store_true")
+    parser.add_argument("--approve-spend", action="store_true")
+    parser.add_argument("--reply", choices=["none", "receipt_text"], default="receipt_text")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    event_path = Path(args.event).expanduser().resolve()
+    if not event_path.exists():
+        print(f"event not found: {event_path}", file=sys.stderr)
+        return 2
+    event = load_json(event_path)
+    if not isinstance(event, dict):
+        print("event JSON must be an object", file=sys.stderr)
+        return 2
+    try:
+        command = build_command(event, args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return call_mouth(command, args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

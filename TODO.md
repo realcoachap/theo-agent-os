@@ -89,5 +89,5 @@ Noted by Theo - 2026-06-09
   commands from execution.
 - [x] Reuse `bin/receipt` for operator reply text.
 - [x] Add Glass read-only Mouth queue/operator state.
-- [ ] Wire the external OpenClaw/Telegram wrapper to call `bin/mouth`.
+- [x] Wire the external OpenClaw/Telegram wrapper to call `bin/mouth`.
 - [ ] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.

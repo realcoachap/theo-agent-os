@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "noted_by": "Theo",
+  "date": "2026-06-10",
+  "channel": "telegram",
+  "chat_id": "1000000000",
+  "message_id": "example-1",
+  "sender_id": "1000000000",
+  "sender": {
+    "label": "Example Operator"
+  },
+  "timestamp": "2026-06-10T14:20:00Z",
+  "text": "/theo run the Shot 4 no-spend mouth wrapper selftest"
+}

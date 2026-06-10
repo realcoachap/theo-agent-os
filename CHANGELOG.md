@@ -11,6 +11,8 @@ Noted by Theo - 2026-06-09
   commands into canonical `job.json` envelopes, optionally dispatch them
   through Foundry, and return existing receipt text without creating a raw
   chat-to-shell lane.
+- `bin/mouth-openclaw` wraps Telegram/OpenClaw event JSON, recomputes trust
+  from local allowlists, emits Mouth command envelopes, and calls `bin/mouth`.
 - Glass now renders read-only Mouth queue/operator state from
   `jobs/inbox/*/mouth.json`.
 - Shot 3 Hands dispatch rails: `budget.max_minutes` adapter timeout with

@@ -116,6 +116,8 @@ def semantic_errors(command: dict[str, Any], worker: dict[str, Any]) -> list[str
         errors.append("Mouth refuses git_push=true; dispatch jobs must keep git_push false")
     if command["permissions"].get("network") is not False:
         errors.append("Mouth v0.4.0 refuses network=true; add a later reviewed lane for networked jobs")
+    if tier != "read_only" and not command["permissions"].get("write"):
+        errors.append("write-tier commands require at least one permissions.write pattern")
     if tier != "read_only" and mode != "draft":
         if approvals.get("operator") is not True:
             errors.append("write dispatch requires approvals.operator=true")

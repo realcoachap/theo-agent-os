@@ -24,6 +24,8 @@ hidden spend path, or a new source of truth for receipts.
 - Selftest dispatch sets `THEO_ADAPTER_SELFTEST=1` and spends no model tokens.
 - Mouth returns the existing `bin/receipt` output; it does not invent a second
   receipt format.
+- `bin/mouth-openclaw` recomputes Telegram/OpenClaw trust from local allowlists
+  and refuses to treat inbound event metadata as self-authenticating.
 - Glass may show Mouth queue/operator state, but Glass still must not dispatch,
   retry, kill, push, proxy OpenClaw, or iframe Control UI.
 
@@ -34,12 +36,13 @@ hidden spend path, or a new source of truth for receipts.
 3. Validate the generated job against `schemas/job.schema.json`.
 4. Dispatch a selftest write command through the existing Claude adapter with
    `THEO_ADAPTER_SELFTEST=1`.
-5. Render the receipt and expose the Mouth record in Glass state.
+5. Route a synthetic Telegram/OpenClaw event through `bin/mouth-openclaw`.
+6. Render the receipt and expose the Mouth record in Glass state.
 
 ## Carry-Overs
 
-- Telegram/OpenClaw wrapper can call `bin/mouth`; this repo only owns the safe
-  intake contract and local runner.
+- The external OpenClaw runtime still decides when to call `bin/mouth-openclaw`;
+  this repo owns the safe wrapper and local runner.
 - Human-friendly natural language classification can come later, but only as a
   producer of `command.schema.json`, not as an executor.
 - The first live `THEO_ENABLE_REAL_CLAUDE=1` run remains a separate QA round.

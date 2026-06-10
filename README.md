@@ -43,6 +43,7 @@ bin/
   dispatch
   glass
   mouth
+  mouth-openclaw
   operator-status
   receipt
   seed-demo
@@ -242,6 +243,20 @@ It validates `schemas/command.schema.json`, writes a canonical job envelope to
 `jobs/inbox/<command_id>/job.json`, optionally calls `bin/dispatch`, and returns
 the existing `bin/receipt` text. It does not execute raw chat text, accept
 arbitrary shell verify commands, or bypass dispatch safety gates.
+
+The OpenClaw/Telegram wrapper is:
+
+```bash
+THEO_TRUSTED_TELEGRAM_IDS=1000000000 \
+  bin/mouth-openclaw \
+  --event jobs/examples/openclaw-telegram-event.json \
+  --selftest-fixture \
+  --dispatch \
+  --receipt
+```
+
+`bin/mouth-openclaw` recomputes trust from local allowlists; it does not trust
+inbound event metadata by itself.
 
 `execution.mode=draft` compiles only. `dispatch_selftest` sets
 `THEO_ADAPTER_SELFTEST=1` and spends no model tokens. `dispatch_real` requires

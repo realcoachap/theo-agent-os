@@ -93,6 +93,9 @@ Irreversible actions require approval before execution.
   until a later reviewed lane exists, require trusted source plus explicit
   write approval for write dispatch, and reuse `bin/receipt` for operator
   replies.
+- `bin/mouth-openclaw` is the reviewed OpenClaw/Telegram wrapper. It must
+  recompute trust from local allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` and
+  must never trust event-provided metadata alone.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
