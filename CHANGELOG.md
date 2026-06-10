@@ -13,6 +13,8 @@ Noted by Theo - 2026-06-09
 
 ### Fixed
 
+- Let `bin/operator-status` write a degraded status snapshot when the
+  OpenClaw CLI is absent instead of crashing before Glass can render.
 - Refuse duplicate `job_id` values cleanly before run creation instead of
   leaking a raw `FileExistsError` traceback.
 - Restore default SIGPIPE handling in `bin/receipt` so piping to tools such as

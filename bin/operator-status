@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS operator-status v0.1.0 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS operator-status v0.1.1 - Noted by Theo - 2026-06-10.
 
 Writes a credential-stripped OpenClaw status snapshot for Glass. The gateway
 token is read only from OPENCLAW_UI_TOKEN and is never written to disk.
@@ -30,6 +30,8 @@ def utc_now() -> str:
 def run(cmd: list[str], timeout: int = 8) -> dict[str, Any]:
     try:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except FileNotFoundError:
+        return {"ok": False, "error": f"{cmd[0]} unavailable"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     payload: Any = proc.stdout.strip()
@@ -58,8 +60,15 @@ def redact(value: Any) -> Any:
 
 
 def installed_version() -> str:
-    proc = subprocess.run(["openclaw", "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return (proc.stdout or proc.stderr).strip()
+    # Fable surfaced this edge: Glass must still render a local status snapshot
+    # on machines where the OpenClaw CLI is absent from PATH.
+    try:
+        proc = subprocess.run(["openclaw", "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+    except FileNotFoundError:
+        return "openclaw unavailable"
+    except Exception as exc:
+        return f"openclaw version unavailable: {exc}"
+    return (proc.stdout or proc.stderr).strip() or "openclaw version unavailable"
 
 
 def main() -> int:
