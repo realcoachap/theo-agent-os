@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.2.2 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.2.3 - Noted by Theo - 2026-06-10.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -666,7 +666,7 @@ function renderSecurity() {
   return `<section class="grid">${items.map(item => `<article class="card">
     <label class="row"><span class="title">${esc(item.label)}</span><input type="checkbox" ${item.checked ? "checked" : ""} ${appState.writes_enabled ? "" : "disabled"} onchange='updateCheck(${JSON.stringify(item).replaceAll("'", "&#39;")}, this.checked, this)'></label>
     <p class="muted">${esc(item.description)}</p>
-    <div class="subtle">updated ${esc(item.ts || "never")}</div>
+    <div class="subtle">updated ${esc(item.checked_at || item.ts || "never")}</div>
     ${appState.writes_enabled ? "" : `<div class="blocked-box">read-only Railway review: checklist writes disabled</div>`}
     <div class="subtle write-status"></div>
   </article>`).join("") || empty("No checklist configured.")}</section>`;
@@ -695,7 +695,7 @@ setInterval(loadState, 3000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.2.2"
+    server_version = "TheoAgentOSGlass/0.2.3"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -847,7 +847,9 @@ class Handler(BaseHTTPRequestHandler):
             for item in items:
                 if isinstance(item, dict) and item.get("id") == item_id:
                     item["checked"] = bool(data.get("checked"))
-                    item["ts"] = utc_now()
+                    checked_at = utc_now()
+                    item["checked_at"] = checked_at
+                    item["ts"] = checked_at
                     updated = True
                     break
             if not updated:

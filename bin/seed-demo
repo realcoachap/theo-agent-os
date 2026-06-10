@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass demo seeder v0.1.0 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass demo seeder v0.1.1 - Noted by Theo - 2026-06-10.
 
 Creates clearly labeled Shot 2 demo runs that validate against the canonical
 result schema. This is for Glass verification only; real runs still come from
 bin/dispatch.
+
+Demo seeding is intentionally additive. Each run gets a fresh UUID so rerunning
+the helper preserves earlier review fixtures instead of rewriting history.
 """
 
 from __future__ import annotations
@@ -102,6 +105,10 @@ def attach(result: dict[str, object], run_dir: Path) -> dict[str, object]:
 def main() -> int:
     started = time.time()
     created: list[Path] = []
+    index = RUNS / "index.jsonl"
+    existing = sum(1 for line in index.read_text(encoding="utf-8").splitlines() if line.strip()) if index.exists() else 0
+    if existing:
+        print(f"DEMO Shot 2 appends fixtures; existing indexed runs: {existing}")
 
     failed = base("failed", "failed-result fixture for Glass run cards.")
     failed["artifacts"] = [{
