@@ -1,0 +1,62 @@
+{
+  "version": "0.1.0",
+  "noted_by": "Theo",
+  "date": "2026-06-09",
+  "workers": [
+    {
+      "name": "graphify",
+      "kind": "cli",
+      "binary": "graphify",
+      "status": "installed",
+      "strengths": ["repo-map", "blast-radius", "read-only-context"],
+      "permission_ceiling": "read_only",
+      "cost_tier": "local"
+    },
+    {
+      "name": "claude",
+      "kind": "cli",
+      "binary": "claude",
+      "status": "installed",
+      "strengths": ["architecture", "specs", "long-context-review", "deep-builds"],
+      "permission_ceiling": "write_sandboxed",
+      "cost_tier": "subscription"
+    },
+    {
+      "name": "codex",
+      "kind": "cli",
+      "binary": "codex",
+      "status": "installed",
+      "strengths": ["repo-edits", "tests", "code-review", "commits"],
+      "permission_ceiling": "write_sandboxed",
+      "cost_tier": "subscription"
+    },
+    {
+      "name": "aider",
+      "kind": "cli",
+      "binary": "aider",
+      "status": "installed",
+      "strengths": ["surgical-patches", "known-file-edits"],
+      "permission_ceiling": "write_sandboxed",
+      "cost_tier": "model-dependent"
+    },
+    {
+      "name": "grok",
+      "kind": "cli",
+      "binary": "grok",
+      "status": "installed",
+      "strengths": ["alternate-reasoning", "research", "creative-divergence"],
+      "permission_ceiling": "read_only",
+      "cost_tier": "subscription"
+    },
+    {
+      "name": "hermes",
+      "kind": "cli",
+      "binary": ".sandbox/hermes-venv/bin/hermes",
+      "status": "sandbox",
+      "strengths": ["memory-experiment", "skill-experiment", "scheduled-agent-scout"],
+      "permission_ceiling": "read_only",
+      "cost_tier": "unknown"
+    }
+  ]
+}
+

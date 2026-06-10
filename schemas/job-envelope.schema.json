@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/realcoachap/theo-agent-os/schemas/job-envelope.schema.json",
+  "title": "Theo Agent OS Job Envelope",
+  "description": "Theo Agent OS v0.1.0 - Noted by Theo - 2026-06-09. Input contract for routed worker jobs.",
+  "type": "object",
+  "required": ["job_id", "lane", "intent", "worker", "task", "context", "permissions", "verify", "budget"],
+  "properties": {
+    "job_id": {"type": "string"},
+    "lane": {"type": "string"},
+    "intent": {"enum": ["build", "patch", "research", "review", "map", "content", "propose"]},
+    "worker": {"type": "string"},
+    "model_profile": {"type": "string"},
+    "task": {"type": "string"},
+    "context": {
+      "type": "object",
+      "properties": {
+        "graph": {"type": "string"},
+        "spec": {"type": "string"},
+        "agents_md": {"type": "boolean"},
+        "blast_radius": {"type": "string"}
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "required": ["tier", "write", "deny", "network", "git_push"],
+      "properties": {
+        "tier": {"enum": ["read_only", "write_sandboxed", "write_trusted"]},
+        "write": {"type": "array", "items": {"type": "string"}},
+        "deny": {"type": "array", "items": {"type": "string"}},
+        "network": {"type": "boolean"},
+        "git_push": {"type": "boolean"}
+      }
+    },
+    "verify": {"type": "object"},
+    "budget": {"type": "object"}
+  }
+}
+

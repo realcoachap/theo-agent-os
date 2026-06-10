@@ -1,0 +1,15 @@
+# Theo Agent OS v0.1.0 - Noted by Theo - 2026-06-09
+# Local-only generated state, credentials, sandboxes, and run artifacts.
+
+.env
+.env.*
+!.env.example
+
+.sandbox/
+runs/
+node_modules/
+.next/
+dist/
+coverage/
+*.log
+
