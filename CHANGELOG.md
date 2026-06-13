@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.0 admin-door **live-state sync**: visibility-aware, signature-gated
+  polling that re-renders only on real change and never clobbers an open run
+  detail, artifact preview, or action feedback. Adds a sync indicator, manual
+  Refresh, and a Live/Pause toggle, plus `tests/glass_live_sync_regression.py`
+  and the `docs/SHOT5-ADMIN-LIVE-SYNC.md` design (deeper dispatch-from-panel
+  actions scoped for a follow-up preflight).
 - Explicit `partial`-status demo fixture in `bin/seed-demo` so Glass and
   operator-status exercise the partial badge/branch (diff applied, tests red,
   held in review), not just success/failed/blocked.

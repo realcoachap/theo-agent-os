@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.4.5 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.0 - Noted by Theo - 2026-06-13.
+
+v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
+only re-renders on real change and never clobbers an open run detail, artifact
+preview, or action feedback. Adds a sync indicator, manual Refresh, and a
+Live/Pause toggle. Server actions stay admin-gated + same-origin as before.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -838,6 +843,9 @@ pre {
     <div class="subtle" id="stamp">loading</div>
   </div>
   <div class="row">
+    <span class="subtle" id="sync-status" title="Auto-refresh status">starting</span>
+    <button id="refresh-btn" title="Refresh now">&#8635; Refresh</button>
+    <button id="live-btn" title="Pause or resume auto-refresh">Pause</button>
     <button class="hidden" id="logout-btn">Log Out</button>
     <a class="button hidden" id="control-link" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
   </div>
@@ -848,6 +856,35 @@ pre {
 const tabs = ["Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
 let current = "Runs";
 let appState = null;
+
+// --- Live-state sync (v0.5.0) ---------------------------------------------
+// WHY: the admin door needs to feel live without yanking the view out from
+// under the operator. We poll only when the tab is visible, only re-render when
+// the meaningful state signature changes, and we defer (never clobber) a render
+// while the operator has a run detail or artifact preview open.
+const POLL_MS = 4000;
+let live = true;            // auto-refresh on/off (Pause toggle)
+let lastSig = null;         // signature of the last rendered state
+let pendingSig = null;      // newer signature held back behind an interaction lock
+let interactionLock = false; // true while a run detail / artifact preview is open
+let openRunId = null;       // job_id of the open run detail, so it survives refresh
+let syncedAt = 0;           // epoch ms of last successful fetch
+let connError = false;      // last fetch failed
+let pollTimer = null;
+
+// Signature deliberately excludes generated_at so a snapshot with no real
+// change does not trigger a re-render every few seconds.
+function stateSignature(s) {
+  if (!s) return "";
+  const runs = (s.runs || []).map(r => `${r.job_id}:${r.status}:${r.state}:${r.finished_at || ""}`);
+  const mouth = (s.mouth || []).map(m => `${m.command_id || m.id || ""}:${m.state || ""}:${(m.delivery || {}).status || ""}`);
+  const sec = (((s.security || {}).items) || []).map(i => `${i.id}:${i.checked ? 1 : 0}`);
+  const props = (s.memory_proposals || []).map(p => p.id);
+  const reg = (((s.workers || {}).registry || {}).workers || []).map(w => `${w.name}:${w.status || ""}`);
+  const op = (s.workers || {}).operator || {};
+  return JSON.stringify({runs, mouth, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
+    auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+}
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -865,15 +902,18 @@ function timestampLine(label, value) {
 }
 function tabBar() {
   document.getElementById("tabs").innerHTML = tabs.map(t => `<button class="tab ${t === current ? "active" : ""}" data-tab="${esc(t)}">${esc(t)}</button>`).join("");
-  document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => { current = btn.dataset.tab; render(); });
+  document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => {
+    current = btn.dataset.tab;
+    // Switching tabs releases any open detail/preview lock and applies the
+    // latest state so the new tab is never stale.
+    openRunId = null;
+    interactionLock = false;
+    if (pendingSig) { lastSig = pendingSig; pendingSig = null; }
+    render();
+    updateSyncIndicator();
+  });
 }
-async function loadState() {
-  const res = await fetch("/api/state", {cache: "no-store"});
-  if (res.status === 401) {
-    window.location = "/login";
-    return;
-  }
-  appState = await res.json();
+function applyChrome() {
   document.getElementById("stamp").textContent = `${appState.mode || "local"} · updated ${appState.generated_at}`;
   const control = document.getElementById("control-link");
   const logout = document.getElementById("logout-btn");
@@ -892,7 +932,78 @@ async function loadState() {
   } else {
     control.classList.add("hidden");
   }
-  render();
+}
+
+function updateSyncIndicator() {
+  const el = document.getElementById("sync-status");
+  if (!el) return;
+  if (connError) { el.textContent = "reconnecting…"; el.className = "subtle blocked"; return; }
+  if (pendingSig) { el.textContent = "● new activity — Refresh"; el.className = "subtle"; return; }
+  const ago = syncedAt ? Math.max(0, Math.round((Date.now() - syncedAt) / 1000)) : null;
+  const when = ago === null ? "" : (ago < 1 ? "just now" : `${ago}s ago`);
+  el.textContent = live ? `live · synced ${when}` : `paused · synced ${when}`;
+  el.className = "subtle";
+}
+
+// force=true always re-renders and breaks any interaction lock (manual refresh).
+async function loadState(force = false) {
+  let data;
+  try {
+    const res = await fetch("/api/state", {cache: "no-store"});
+    if (res.status === 401) { window.location = "/login"; return; }
+    data = await res.json();
+  } catch (err) {
+    connError = true;
+    updateSyncIndicator();
+    return;
+  }
+  connError = false;
+  appState = data;
+  syncedAt = Date.now();
+  applyChrome();
+  const sig = stateSignature(appState);
+  if (force) {
+    pendingSig = null;
+    lastSig = sig;
+    render();
+  } else if (sig !== lastSig) {
+    // Real change. If the operator is mid-interaction, hold the render back and
+    // surface a "new activity" affordance instead of clobbering their view.
+    if (interactionLock) {
+      pendingSig = sig;
+    } else {
+      lastSig = sig;
+      render();
+    }
+  }
+  updateSyncIndicator();
+}
+
+function syncTick() {
+  if (live && document.visibilityState === "visible") {
+    loadState(false);
+  } else {
+    updateSyncIndicator();
+  }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(syncTick, POLL_MS);
+}
+
+function manualRefresh() {
+  interactionLock = false;
+  openRunId = null;
+  loadState(true);
+}
+
+function toggleLive() {
+  live = !live;
+  const btn = document.getElementById("live-btn");
+  if (btn) btn.textContent = live ? "Pause" : "Resume";
+  if (live) loadState(false);
+  updateSyncIndicator();
 }
 function runCard(run) {
   const tests = run.tests || {};
@@ -907,11 +1018,23 @@ function runCard(run) {
     <p><button onclick="openRun('${esc(run.job_id)}')">Open Run</button></p>
   </article>`;
 }
+function closeRun() {
+  openRunId = null;
+  interactionLock = false;
+  const pane = document.getElementById("run-detail");
+  if (pane) pane.innerHTML = "";
+  // Apply anything that arrived while the detail was open.
+  if (pendingSig) { loadState(true); } else { updateSyncIndicator(); }
+}
 async function openRun(jobId) {
+  // Lock auto-render so a poll cannot wipe the detail the operator is reading.
+  openRunId = jobId;
+  interactionLock = true;
   const res = await fetch(`/api/run/${encodeURIComponent(jobId)}`, {cache: "no-store"});
   const detail = await res.json();
   document.getElementById("run-detail").innerHTML = `<section class="card detail">
     <div class="row"><div class="title">Run ${esc(detail.job_id)}</div><span class="pill ${cls(detail.status)}">${esc(detail.status)}</span></div>
+    <p><button onclick="closeRun()">Close</button></p>
     ${timestampLine("started", detail.created_at)}
     ${timestampLine("finished", detail.finished_at)}
     <p>${esc(detail.summary)}</p>
@@ -927,6 +1050,9 @@ function renderRuns() {
   return `<div id="run-detail"></div><section class="grid">${(appState.runs || []).map(runCard).join("") || empty("No runs yet.")}</section>`;
 }
 async function previewArtifact(jobId, index, target) {
+  // Opening a preview locks auto-render so the poll cannot wipe it.
+  interactionLock = true;
+  updateSyncIndicator();
   const res = await fetch(`/api/artifact?job_id=${encodeURIComponent(jobId)}&index=${index}`, {cache: "no-store"});
   const data = await res.json();
   if (data.blocked) {
@@ -1086,15 +1212,25 @@ function render() {
   document.getElementById("app").innerHTML = renderers[current]();
 }
 tabBar();
-loadState();
-setInterval(loadState, 3000);
+document.getElementById("refresh-btn").onclick = manualRefresh;
+document.getElementById("live-btn").onclick = toggleLive;
+// Pause polling while the tab is hidden; catch up immediately on return.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && live) loadState(false);
+  updateSyncIndicator();
+});
+loadState(true);
+startPolling();
+// Cheap 1s tick so the "synced Xs ago" label counts up smoothly without
+// hammering the server between polls.
+setInterval(updateSyncIndicator, 1000);
 </script>
 </body>
 </html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.4.4"
+    server_version = "TheoAgentOSGlass/0.5.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

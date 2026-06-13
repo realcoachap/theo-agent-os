@@ -75,8 +75,10 @@ Noted by Theo - 2026-06-09
 - [x] Preserve Fable's final PASS artifact in
   `docs/FABLE-SHOT3-HANDS-QA-PASS.md`.
 - [x] Add one explicit partial-status fixture.
-- [ ] Run first live `THEO_ENABLE_REAL_CLAUDE=1` session in a throwaway lane
-  when token spend is approved.
+- [x] Run first live `THEO_ENABLE_REAL_CLAUDE=1` session in a throwaway lane
+  when token spend is approved. (2026-06-13: job
+  `3e4436b4-5644-4206-a50b-dc0c00bea0b6`, status success, 0.173 min, wrote
+  `LIVE-CLAUDE-PROOF.txt`, diff captured, no blocked actions.)
 
 ## 2026-06-10 Task: Shot 4 Mouth
 
@@ -100,7 +102,11 @@ Noted by Theo - 2026-06-09
   fixture gate, admin login throttling, and sender-guard regression tests.
 - [x] Preserve Fable's Shot 4.2/4.3 PASS + chat UI scout artifact in
   `docs/FABLE-SHOT4-QA-PASS-CHATUI.md`.
-- [ ] Design live-state sync/actions for the authenticated Railway admin door.
+- [x] Design live-state sync/actions for the authenticated Railway admin door.
+  (2026-06-13, Glass v0.5.0: visibility-aware, signature-gated polling that
+  never clobbers an open detail; sync indicator + Refresh + Live/Pause;
+  `tests/glass_live_sync_regression.py`; deeper dispatch-from-panel actions
+  scoped in `docs/SHOT5-ADMIN-LIVE-SYNC.md` for a follow-up preflight.)
 - [x] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.
 
 ## 2026-06-11 Task: Obsidian Chat Backup Import
