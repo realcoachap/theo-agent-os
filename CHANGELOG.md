@@ -6,6 +6,9 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.1 admin-gated `/control/` proxy for the Spartacus OpenClaw
+  gateway Control UI, including HTTP asset forwarding, WebSocket upgrade
+  tunneling, stripped admin cookies, and `tests/glass_control_proxy_regression.py`.
 - Glass v0.5.0 admin-door **live-state sync**: visibility-aware, signature-gated
   polling that re-renders only on real change and never clobbers an open run
   detail, artifact preview, or action feedback. Adds a sync indicator, manual

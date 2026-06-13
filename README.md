@@ -204,7 +204,12 @@ http://127.0.0.1:4040
 
 Glass is deliberately read-mostly. It can append memory proposal verdicts to
 `memory/queue.jsonl` and update manual security checklist timestamps in
-`security/checklist.json`; it cannot dispatch jobs or proxy OpenClaw.
+`security/checklist.json`; it cannot dispatch jobs.
+
+In Railway admin mode, Glass also exposes `/control/` as an admin-gated
+HTTP/WebSocket proxy to Spartacus' OpenClaw gateway Control UI. The proxy stores
+no gateway token, strips the Glass admin cookie before forwarding upstream, and
+keeps Spartacus' own token/device-pairing checks as the real authority.
 
 Unsafe HTML artifacts show a blocked badge unless the result envelope declares
 `safe_to_render=true`, and artifact preview paths must stay inside their own
@@ -219,8 +224,7 @@ bash scripts/start-glass-railway.sh
 ```
 
 This mode binds to `0.0.0.0` for Railway, allows Railway Host headers, seeds
-demo Shot 2 runs when no run index exists, and disables Glass POST writes. It
-does not expose the local OpenClaw Control UI link.
+demo Shot 2 runs when no run index exists, and disables Glass POST writes.
 
 Public review mode refuses to serve non-demo run history unless the operator
 sets:
