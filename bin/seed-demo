@@ -142,6 +142,42 @@ def main() -> int:
     attach(blocked, blocked_dir)
     (blocked_dir / "result.json").write_text(json.dumps(blocked, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    # Partial-status fixture. Shot 3 QA closeout needs one explicit `partial`
+    # run so Glass and operator-status both exercise the partial badge/branch,
+    # not just success/failed/blocked. A partial run made real progress (a diff
+    # and some passing tests) but did not fully succeed (some tests still red).
+    partial = base("partial", "partial-result fixture: diff landed but tests are red.")
+    partial["diff"] = (
+        "diff --git a/demo/partial.txt b/demo/partial.txt\n"
+        "--- a/demo/partial.txt\n"
+        "+++ b/demo/partial.txt\n"
+        "@@ -1 +1,2 @@\n"
+        " DEMO partial fixture\n"
+        "+DEMO partial fixture: change applied, verification incomplete\n"
+    )
+    partial["files_touched"] = ["demo/partial.txt"]
+    partial["tests"] = {"ran": True, "passed": 3, "failed": 2}
+    partial["followups"] = [
+        "DEMO followup: fix the two failing demo tests before promoting this run.",
+    ]
+    partial_dir = write_run("partial", partial, {
+        "diff.patch": partial["diff"],
+        "partial-report.md": "# DEMO Partial\n\nDiff applied, 3 passed / 2 failed. Held in review.\n",
+    })
+    created.append(partial_dir)
+    partial["artifacts"] = [{
+        "artifact_type": "code",
+        "title": "Partial run diff",
+        "summary": "Applied change for a run that stopped at partial status.",
+        "path": f"{rel(partial_dir)}/diff.patch",
+        "preview_kind": "text",
+        "worker": "demo",
+        "source_job": partial["job_id"],
+        "safe_to_render": True,
+    }]
+    attach(partial, partial_dir)
+    (partial_dir / "result.json").write_text(json.dumps(partial, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     unsafe = base("success", "unsafe HTML artifact fixture for safe_to_render gating.")
     unsafe_dir = write_run("unsafe-html", unsafe, {"unsafe.html": "<h1>DEMO Unsafe HTML</h1><script>document.body.dataset.bad='1'</script>\n"})
     created.append(unsafe_dir)

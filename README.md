@@ -76,6 +76,7 @@ runs/
 security/
   checklist.json
 scripts/
+  import-chat-backups-to-obsidian.py
   install-hermes-sandbox.sh
 ```
 
@@ -146,6 +147,25 @@ GRAPHIFY_STUB=1 bin/dispatch jobs/examples/map-self.json
 
 Stub results prove envelope plumbing only. Real map jobs must use the Graphify
 CLI before any write worker consumes graph context.
+
+## Obsidian Chat Imports
+
+Chat backups are archive material, not live instructions. The local importer
+turns reviewed Telegram/OpenClaw JSON exports and WhatsApp text exports into
+Obsidian Markdown under the existing Ascending Research vault:
+
+```bash
+python3 scripts/import-chat-backups-to-obsidian.py \
+  --vault "$HOME/Documents/Ascending Research Vault" \
+  /path/to/telegram-export.json \
+  /path/to/whatsapp-export.txt
+```
+
+The importer writes human-readable notes under `60 Chat Imports/` plus
+`.theo-index/chat-messages.jsonl` for later OpenBrain ingest review. Imported
+messages stay `archive_only`; Theo OS jobs can orchestrate the import through
+`jobs/examples/import-chat-backups-to-vault.json`, but raw chat history must not
+be treated as command input or durable memory without explicit review.
 
 ## Fable Prompt Pack
 

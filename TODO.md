@@ -74,7 +74,7 @@ Noted by Theo - 2026-06-09
 - [x] Tag `shot3-hands-v0.3.1`.
 - [x] Preserve Fable's final PASS artifact in
   `docs/FABLE-SHOT3-HANDS-QA-PASS.md`.
-- [ ] Add one explicit partial-status fixture.
+- [x] Add one explicit partial-status fixture.
 - [ ] Run first live `THEO_ENABLE_REAL_CLAUDE=1` session in a throwaway lane
   when token spend is approved.
 
@@ -102,3 +102,18 @@ Noted by Theo - 2026-06-09
   `docs/FABLE-SHOT4-QA-PASS-CHATUI.md`.
 - [ ] Design live-state sync/actions for the authenticated Railway admin door.
 - [x] Ask Fable for a narrow Shot 4 QA pass after the wrapper exists.
+
+## 2026-06-11 Task: Obsidian Chat Backup Import
+
+- [x] Add a local-first Telegram/WhatsApp backup importer for the Obsidian
+  vault lane.
+- [x] Preserve directionality, source paths, message ids, timestamps, and
+  attachment metadata in Markdown plus JSONL.
+- [x] Add synthetic importer regression coverage.
+- [x] Add Theo OS docs and an example job envelope for future imports.
+- [x] Import Coach's uploaded Telegram/WhatsApp backup bundle after upload.
+  (2026-06-13: 11 Telegram HTML pages -> 9,859 grouped messages in
+  `60 Chat Imports/Telegram/Theokoles.md` plus staged index
+  `98 Indexes/chat-import-staged.jsonl`.)
+- [ ] Add direct OpenBrain `chat_exports` ingest lane after the generated vault
+  output is reviewed.

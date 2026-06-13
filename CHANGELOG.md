@@ -6,6 +6,21 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Explicit `partial`-status demo fixture in `bin/seed-demo` so Glass and
+  operator-status exercise the partial badge/branch (diff applied, tests red,
+  held in review), not just success/failed/blocked.
+- OpenBrain `chat_exports` ingest lane (`~/.opensuites/openbrain/openbrain.py`
+  v0.2.0): indexes the importer's vault JSONL into batched, directional,
+  searchable chunks. First run: Coach's Telegram backup -> 9,859 messages ->
+  5,044 chunks, idempotent re-ingest verified.
+- Obsidian chat backup import foundation:
+  `scripts/import-chat-backups-to-obsidian.py`,
+  `docs/OBSIDIAN-CHAT-BACKUP-IMPORT.md`,
+  `docs/OBSIDIAN-CHAT-IMPORT-ARCHITECTURE.md`,
+  `jobs/examples/import-chat-backups-to-vault.json`, and
+  `tests/chat_backup_importer_regression.py` convert Telegram/OpenClaw JSON and
+  WhatsApp text exports into the local Ascending Research Obsidian vault with
+  OpenBrain-ready JSONL indexes.
 - Shot 4 hardening regression script:
   `tests/shot4_hardening_regression.py` proves explicit test-channel trust,
   sender-guard forgery/untrusted blocking, and admin login throttling.
