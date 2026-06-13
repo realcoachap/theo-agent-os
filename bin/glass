@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.5 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.6 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -26,6 +26,11 @@ v0.5.5 turns the Control tab into a Spartacus-first Jarvis / Agent OS panel:
 one proof chain, clear operator entry routes, app-layer gateway response checks,
 and future nodes demoted to planned reachability instead of competing with the
 VPS POC.
+
+v0.5.6 adds the first Theo OS Mission Control cockpit: left workspace/agent
+rail, center live mission timeline, right details rail, and an inert composer
+stub. It reuses the existing `/api/state` data and keeps Glass read-only for
+operations, with Spartacus actions limited to refresh/deep-link routes.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -1001,65 +1006,226 @@ def page() -> str:
 <style>
 :root {
   color-scheme: dark;
-  --bg: #101114;
-  --panel: #181b20;
-  --panel-2: #20242b;
-  --line: #323741;
-  --text: #eef1f3;
-  --muted: #a7afb9;
-  --green: #64d18a;
-  --amber: #e6bb5d;
+  --bg: #0c1116;
+  --bg-soft: #111820;
+  --panel: #151c24;
+  --panel-2: #1b242d;
+  --panel-3: #10161d;
+  --line: #2c3844;
+  --line-strong: #40505f;
+  --text: #edf2f5;
+  --muted: #9da9b4;
+  --faint: #6f7d89;
+  --green: #6fd184;
+  --amber: #e8bf61;
   --red: #ef6a67;
-  --blue: #7fb3ff;
-  --violet: #c59cff;
+  --blue: #5db7e8;
+  --teal: #49d2c4;
+  --violet: #b9a0ff;
+  --shadow: 0 18px 42px rgba(0, 0, 0, 0.26);
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(73, 210, 196, 0.09), transparent 30%),
+    linear-gradient(180deg, #0e141a 0%, var(--bg) 40%, #090d12 100%);
   color: var(--text);
   font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-header {
+.shell { min-height: 100vh; display: grid; grid-template-columns: 280px minmax(0, 1fr) 360px; }
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: rgba(12, 17, 22, 0.96);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  min-height: 74px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  min-height: 68px;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--line);
-  background: #14161a;
+  gap: 12px;
 }
-h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0; }
-.subtle { color: var(--muted); font-size: 12px; }
-.tabs {
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #071016;
+  font-weight: 800;
+  background: linear-gradient(145deg, var(--blue), var(--teal));
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 0 24px rgba(73, 210, 196, 0.22);
+}
+.brand-text { min-width: 0; flex: 1; }
+.brand-title { font-size: 16px; font-weight: 760; line-height: 1.1; }
+.brand-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.sidebar-body { padding: 14px 10px; display: flex; flex-direction: column; gap: 18px; overflow: auto; }
+.sidebar-footer { margin-top: auto; border-top: 1px solid var(--line); padding: 12px 14px; }
+.section-label {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0 8px 7px;
+}
+.workspace-pill {
   display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 10px 22px;
-  border-bottom: 1px solid var(--line);
-  background: #121418;
-}
-.tab {
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
   border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--panel-3);
+}
+.workspace-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: rgba(93, 183, 232, 0.18);
+  color: var(--blue);
+  font-weight: 760;
+}
+.tab-list { display: flex; flex-direction: column; gap: 4px; }
+.tab {
+  width: 100%;
+  border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
   min-height: 34px;
-  padding: 0 12px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   white-space: nowrap;
   cursor: pointer;
+  text-align: left;
 }
-.tab.active { color: var(--text); background: var(--panel-2); border-color: #4a505b; }
-main { padding: 18px 22px 40px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; }
-.card {
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.tab.active {
+  color: var(--text);
+  background: linear-gradient(90deg, rgba(93, 183, 232, 0.18), rgba(93, 183, 232, 0.06));
+  border-color: rgba(93, 183, 232, 0.28);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.tab-count {
+  min-width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(239, 106, 103, 0.18);
+  color: #ffc1bf;
+  font-size: 12px;
+}
+.agent-list { display: flex; flex-direction: column; gap: 6px; }
+.agent-row {
+  min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
-  padding: 14px;
-  min-width: 0;
+  background: rgba(21, 28, 36, 0.72);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 760;
+  flex: 0 0 auto;
+}
+.agent-copy { min-width: 0; flex: 1; }
+.agent-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--faint); box-shadow: 0 0 0 3px rgba(255,255,255,0.03); flex: 0 0 auto; }
+.status-dot.success { background: var(--green); }
+.status-dot.blocked { background: var(--amber); }
+.status-dot.failed { background: var(--red); }
+.stage { min-width: 0; min-height: 100vh; display: flex; flex-direction: column; }
+.topbar {
+  min-height: 74px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 21, 28, 0.94);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.channel-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.channel-title h1 { margin: 0; font-size: 21px; font-weight: 780; letter-spacing: 0; line-height: 1.1; }
+.toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.live-strip {
+  min-height: 42px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(11, 16, 21, 0.72);
+}
+main { min-width: 0; flex: 1; padding: 16px 20px 24px; overflow: auto; }
+.detail-rail {
+  border-left: 1px solid var(--line);
+  background: rgba(15, 21, 28, 0.98);
+  min-width: 0;
+  min-height: 100vh;
+  padding: 18px 16px 22px;
+  overflow: auto;
+}
+.rail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.rail-title { font-size: 18px; font-weight: 760; line-height: 1.2; }
+.rail-section { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.rail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.metric { min-height: 72px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: rgba(21, 28, 36, 0.68); }
+.metric-value { font-size: 20px; font-weight: 760; line-height: 1.15; }
+.mission-hero {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(93, 183, 232, 0.12), rgba(21, 28, 36, 0.78) 42%, rgba(73, 210, 196, 0.07));
+  box-shadow: var(--shadow);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.timeline { display: flex; flex-direction: column; gap: 10px; }
+.timeline-row { display: grid; grid-template-columns: 74px 38px minmax(0, 1fr); gap: 10px; align-items: start; }
+.timeline-time { color: var(--muted); font-size: 12px; padding-top: 10px; text-align: right; }
+.timeline-card { border: 1px solid var(--line); border-radius: 8px; background: rgba(21, 28, 36, 0.86); padding: 12px; min-width: 0; position: relative; }
+.timeline-card.accent-blue { border-left: 3px solid var(--blue); }
+.timeline-card.accent-green { border-left: 3px solid var(--green); }
+.timeline-card.accent-amber { border-left: 3px solid var(--amber); }
+.timeline-card.accent-red { border-left: 3px solid var(--red); }
+.timeline-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.progress-track { height: 8px; border-radius: 999px; background: #27313b; overflow: hidden; margin: 10px 0 4px; }
+.progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--teal)); }
+.composer { position: sticky; bottom: 0; margin-top: 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: rgba(13, 19, 25, 0.98); padding: 10px; box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.22); }
+.composer-row { display: flex; align-items: center; gap: 8px; }
+.composer input { flex: 1; min-width: 0; min-height: 38px; border: 1px solid transparent; background: transparent; color: var(--text); outline: none; font: inherit; }
+.composer input::placeholder { color: var(--faint); }
+.composer-status { min-height: 18px; margin-top: 7px; color: var(--muted); font-size: 12px; }
+h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0; }
+.subtle { color: var(--muted); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 14px; min-width: 0; }
 .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .title { font-weight: 700; overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
@@ -1069,60 +1235,107 @@ main { padding: 18px 22px 40px; }
 .failed { color: var(--red); border-color: #774240; }
 .review { color: var(--blue); }
 .muted { color: var(--muted); }
-button, a.button {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-2);
-  color: var(--text);
-  min-height: 32px;
-  padding: 0 10px;
-  text-decoration: none;
-  cursor: pointer;
-}
+button, a.button { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); min-height: 32px; padding: 0 10px; text-decoration: none; cursor: pointer; }
 button:hover, a.button:hover { border-color: #59616e; }
 button.danger { color: var(--red); }
-pre {
-  max-height: 340px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #0b0c0f;
-  padding: 12px;
-}
+pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word; border: 1px solid var(--line); border-radius: 6px; background: #0b0c0f; padding: 12px; }
 .hidden { display: none; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .detail { grid-column: 1 / -1; }
 .artifact-preview iframe { width: 100%; min-height: 260px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 .blocked-box { border: 1px dashed #76553a; color: var(--amber); border-radius: 6px; padding: 10px; background: #1c1710; }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 0.4fr); gap: 12px; }
+@media (max-width: 1180px) {
+  .shell { grid-template-columns: 240px minmax(0, 1fr); }
+  .detail-rail { grid-column: 1 / -1; min-height: auto; border-left: 0; border-top: 1px solid var(--line); }
+}
 @media (max-width: 820px) {
-  header { align-items: flex-start; flex-direction: column; }
-  main, header, .tabs { padding-left: 14px; padding-right: 14px; }
+  .shell { display: block; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 440px; overflow: auto; }
+  .brand { min-height: 84px; padding: 14px; align-items: flex-start; flex-direction: column; }
+  .topbar { align-items: flex-start; flex-direction: column; }
+  .sidebar-body { max-height: none; gap: 14px; }
+  .sidebar-footer { display: none; }
+  .agent-list .agent-row:nth-child(n+3) { display: none; }
+  .tab-list, .agent-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  main, .topbar, .live-strip { padding-left: 14px; padding-right: 14px; }
+  .live-strip { align-items: flex-start; flex-direction: column; padding-top: 10px; padding-bottom: 10px; }
+  .timeline-row { grid-template-columns: 1fr; gap: 6px; }
+  .timeline-time { text-align: left; padding-top: 0; }
   .split { grid-template-columns: 1fr; }
+  .rail-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>Theo Agent OS Glass</h1>
-    <div class="subtle" id="stamp">loading</div>
-  </div>
-  <div class="row">
-    <span class="subtle" id="sync-status" title="Auto-refresh status">starting</span>
-    <button id="refresh-btn" title="Refresh now">&#8635; Refresh</button>
-    <button id="live-btn" title="Pause or resume auto-refresh">Pause</button>
-    <button class="hidden" id="logout-btn">Log Out</button>
-    <a class="button hidden" id="control-link" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
-  </div>
-</header>
-<nav class="tabs" id="tabs"></nav>
-<main id="app"></main>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">T</div>
+      <div class="brand-text">
+        <div class="brand-title">Theo OS</div>
+        <div class="brand-subtitle">Mission Control</div>
+      </div>
+    </div>
+    <div class="sidebar-body">
+      <section>
+        <div class="section-label">Workspace</div>
+        <div class="workspace-pill">
+          <div class="workspace-icon">T</div>
+          <div class="agent-copy">
+            <div class="agent-name">Theo Labs</div>
+            <div class="subtle" id="mode-pill">loading</div>
+          </div>
+        </div>
+      </section>
+      <section>
+        <div class="section-label">Channels</div>
+        <nav class="tab-list" id="tabs"></nav>
+      </section>
+      <section>
+        <div class="section-label">Agents</div>
+        <div class="agent-list" id="agent-list"></div>
+      </section>
+    </div>
+    <div class="sidebar-footer">
+      <div class="agent-row">
+        <div class="avatar">OP</div>
+        <div class="agent-copy">
+          <div class="agent-name" id="operator-label">Operator</div>
+          <div class="subtle">single-owner admin</div>
+        </div>
+        <span class="status-dot success"></span>
+      </div>
+    </div>
+  </aside>
+  <section class="stage">
+    <header class="topbar">
+      <div class="channel-title">
+        <span class="pill">#</span>
+        <div>
+          <h1 id="channel-heading">mission-control</h1>
+          <div class="subtle" id="stamp">loading</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <span class="subtle" id="sync-status" title="Auto-refresh status">starting</span>
+        <button id="refresh-btn" title="Refresh now">Refresh</button>
+        <button id="live-btn" title="Pause or resume auto-refresh">Pause</button>
+        <button class="hidden" id="logout-btn">Log Out</button>
+        <a class="button hidden" id="control-link" href="http://127.0.0.1:18789" target="_blank" rel="noreferrer">Open Control UI</a>
+      </div>
+    </header>
+    <div class="live-strip">
+      <div><span class="pill success">Live</span> <span class="subtle">operations, receipts, approvals, artifacts</span></div>
+      <div class="subtle" id="proof-summary">Spartacus proof loading</div>
+    </div>
+    <main id="app"></main>
+  </section>
+  <aside class="detail-rail" id="detail-rail"></aside>
+</div>
 <script>
-const tabs = ["Runs", "Mouth", "Control", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
-let current = "Runs";
+const tabs = ["Mission Control", "Control", "Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
+let current = "Mission Control";
 let appState = null;
 
 // --- Live-state sync (v0.5.0) ---------------------------------------------
@@ -1169,8 +1382,74 @@ function timeLabel(value) {
 function timestampLine(label, value) {
   return value ? `<div class="subtle" title="${esc(value)}">${esc(label)} ${esc(timeLabel(value))}</div>` : "";
 }
+function channelLabel(tab) {
+  const labels = {
+    "Mission Control": "mission-control",
+    "Control": "spartacus-control",
+    "Runs": "runs",
+    "Mouth": "mouth",
+    "Artifacts": "artifacts",
+    "Repo Maps": "repo-maps",
+    "Specs": "specs",
+    "Memory Proposals": "memory",
+    "Workers": "agent-room",
+    "Security": "security"
+  };
+  return labels[tab] || String(tab || "").toLowerCase().replaceAll(" ", "-");
+}
+function tabCount(tab) {
+  if (!appState) return "";
+  if (tab === "Runs") return (appState.runs || []).length;
+  if (tab === "Mouth") return (appState.mouth || []).length + (appState.mouth_replies || []).length;
+  if (tab === "Artifacts") return (appState.artifacts || []).length;
+  if (tab === "Memory Proposals") return (appState.memory_proposals || []).length;
+  if (tab === "Control") return (appState.control_nodes || []).filter(n => n.enabled).length;
+  return "";
+}
+function initials(name) {
+  const parts = String(name || "agent").split(/[\s/-]+/).filter(Boolean);
+  return parts.slice(0, 2).map(part => part[0]).join("").toUpperCase() || "A";
+}
+function nodeStatusClass(n) {
+  if (["online", "responding", "reachable"].includes(n.status)) return "success";
+  if (["planned", "degraded"].includes(n.status)) return "blocked";
+  return "failed";
+}
+function renderAgentList() {
+  const nodes = appState ? (appState.control_nodes || []) : [];
+  const workers = appState ? ((((appState.workers || {}).registry || {}).workers) || []) : [];
+  const agentRows = [];
+  for (const node of nodes) {
+    agentRows.push({
+      name: node.label,
+      meta: node.reference ? "VPS proof target" : node.role,
+      status: nodeStatusClass(node)
+    });
+  }
+  for (const worker of workers.slice(0, 3)) {
+    agentRows.push({
+      name: worker.name || "worker",
+      meta: worker.status || "registered",
+      status: worker.adapter_pending ? "blocked" : "success"
+    });
+  }
+  const rows = agentRows.slice(0, 8).map(agent => `<div class="agent-row">
+    <div class="avatar">${esc(initials(agent.name))}</div>
+    <div class="agent-copy">
+      <div class="agent-name">${esc(agent.name)}</div>
+      <div class="subtle">${esc(agent.meta)}</div>
+    </div>
+    <span class="status-dot ${esc(agent.status)}"></span>
+  </div>`).join("");
+  return rows || `<div class="agent-row"><div class="avatar">T</div><div class="agent-copy"><div class="agent-name">Theo</div><div class="subtle">loading</div></div><span class="status-dot blocked"></span></div>`;
+}
 function tabBar() {
-  document.getElementById("tabs").innerHTML = tabs.map(t => `<button class="tab ${t === current ? "active" : ""}" data-tab="${esc(t)}">${esc(t)}</button>`).join("");
+  const nav = document.getElementById("tabs");
+  nav.innerHTML = tabs.map(t => {
+    const count = tabCount(t);
+    const countHtml = count === "" || count === 0 ? "" : `<span class="tab-count">${esc(count)}</span>`;
+    return `<button class="tab ${t === current ? "active" : ""}" data-tab="${esc(t)}"><span># ${esc(channelLabel(t))}</span>${countHtml}</button>`;
+  }).join("");
   document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => {
     current = btn.dataset.tab;
     // Switching tabs releases any open detail/preview lock and applies the
@@ -1181,9 +1460,20 @@ function tabBar() {
     render();
     updateSyncIndicator();
   });
+  const agents = document.getElementById("agent-list");
+  if (agents) agents.innerHTML = renderAgentList();
 }
 function applyChrome() {
   document.getElementById("stamp").textContent = `${appState.mode || "local"} · updated ${appState.generated_at}`;
+  document.getElementById("mode-pill").textContent = appState.mode || "local";
+  document.getElementById("operator-label").textContent = ((appState.admin || {}).user || "Operator");
+  document.getElementById("channel-heading").textContent = channelLabel(current);
+  const reference = (appState.control_nodes || []).find(n => n.reference) || {};
+  const proof = document.getElementById("proof-summary");
+  if (proof) {
+    const latency = Number.isFinite(Number(reference.latency_ms)) ? ` · ${reference.latency_ms}ms` : "";
+    proof.textContent = reference.status ? `Spartacus ${reference.status}${latency}` : "Spartacus proof loading";
+  }
   const control = document.getElementById("control-link");
   const logout = document.getElementById("logout-btn");
   if ((appState.admin || {}).authenticated) {
@@ -1389,10 +1679,190 @@ function renderMouth() {
     <div><h2 style="font-size:16px;margin:0 0 8px">Replies</h2><div class="grid">${replies || empty("No Mouth replies yet.")}</div></div>
   </section>`;
 }
-function nodeStatusClass(n) {
-  if (["online", "responding", "reachable"].includes(n.status)) return "success";
-  if (["planned", "degraded"].includes(n.status)) return "blocked";
-  return "failed";
+function focusRun() {
+  const runs = appState.runs || [];
+  return runs.find(run => ["partial", "blocked", "failed"].includes(run.status)) || runs[0] || null;
+}
+function runProgress(run) {
+  if (!run) return 0;
+  if (run.status === "success") return 100;
+  if (run.status === "failed") return 100;
+  if (run.status === "blocked") return 68;
+  if (run.status === "partial") return 62;
+  return 42;
+}
+function accentForStatus(status) {
+  if (status === "success") return "accent-green";
+  if (status === "failed") return "accent-red";
+  if (status === "partial" || status === "blocked") return "accent-amber";
+  return "accent-blue";
+}
+function eventTime(item) {
+  const date = new Date(String(item.ts || ""));
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+function missionItems() {
+  const items = [];
+  const reference = (appState.control_nodes || []).find(n => n.reference);
+  if (reference) {
+    items.push({
+      type: "node",
+      ts: reference.checked_at || appState.generated_at,
+      actor: reference.label || "Spartacus",
+      title: "Spartacus gateway proof",
+      body: reference.responding
+        ? `Gateway answered at the app layer with HTTP ${reference.http_status || "ok"}.`
+        : "Gateway proof is not fully responding yet.",
+      status: reference.status || "unknown",
+      meta: [`probe ${reference.probe || "tcp"}`, Number.isFinite(Number(reference.latency_ms)) ? `${reference.latency_ms}ms` : ""].filter(Boolean)
+    });
+  }
+  for (const run of (appState.runs || []).slice(0, 8)) {
+    const tests = run.tests || {};
+    items.push({
+      type: "run",
+      ts: run.finished_at || run.created_at,
+      actor: run.worker || "Theo",
+      title: run.summary || `Run ${short(run.job_id)}`,
+      body: `Run ${short(run.job_id)} is ${run.status} / ${run.state}.`,
+      status: run.status,
+      run,
+      meta: [`lane ${run.lane || "self"}`, `tests ${tests.passed ?? 0}/${tests.failed ?? 0}`]
+    });
+  }
+  for (const command of (appState.mouth || []).slice(0, 5)) {
+    items.push({
+      type: "dispatch",
+      ts: command.created_at,
+      actor: ((command.source || {}).sender_label) || "Theo",
+      title: command.summary || "Mouth command received",
+      body: `Command ${short(command.command_id)} is ${command.state || "queued"}.`,
+      status: command.state || "review",
+      meta: [command.mode || "mouth", command.job_id ? `job ${short(command.job_id)}` : ""].filter(Boolean)
+    });
+  }
+  for (const reply of (appState.mouth_replies || []).slice(0, 5)) {
+    items.push({
+      type: "receipt",
+      ts: ((reply.delivery || {}).created_at) || reply.created_at,
+      actor: "Theo",
+      title: reply.ok ? "Receipt posted" : "Receipt blocked",
+      body: reply.text || "",
+      status: reply.ok ? "success" : "failed",
+      meta: [reply.channel || "channel", (reply.delivery || {}).status || "pending"].filter(Boolean)
+    });
+  }
+  return items.sort((a, b) => eventTime(b) - eventTime(a)).slice(0, 12);
+}
+function timelineItem(item) {
+  const statusClass = item.type === "node" ? nodeStatusClass(item) : cls(item.status);
+  const accent = item.type === "node" ? (item.status === "responding" ? "accent-green" : "accent-amber") : accentForStatus(item.status);
+  const runButton = item.run ? `<button onclick="current='Runs'; render(); openRun('${esc(item.run.job_id)}')">View run</button>` : "";
+  const progress = item.run ? `<div class="progress-track"><div class="progress-fill" style="width:${runProgress(item.run)}%"></div></div>` : "";
+  return `<div class="timeline-row">
+    <div class="timeline-time">${esc(timeLabel(item.ts) || "now")}</div>
+    <div class="avatar">${esc(initials(item.actor))}</div>
+    <article class="timeline-card ${accent}">
+      <div class="row">
+        <div>
+          <div class="subtle">${esc(item.actor)} / ${esc(item.type)}</div>
+          <div class="title">${esc(item.title)}</div>
+        </div>
+        <span class="pill ${statusClass}">${esc(item.status || "live")}</span>
+      </div>
+      <p class="muted">${esc(item.body)}</p>
+      ${progress}
+      <div class="timeline-meta">
+        ${(item.meta || []).map(value => `<span class="pill">${esc(value)}</span>`).join("")}
+        ${runButton}
+      </div>
+    </article>
+  </div>`;
+}
+function composerBoundary(event) {
+  event.preventDefault();
+  const status = document.getElementById("composer-status");
+  if (status) status.textContent = "Composer is staged only: dispatch still goes through bin/mouth + bin/dispatch with confirm and receipts.";
+}
+function renderMission() {
+  const reference = (appState.control_nodes || []).find(n => n.reference) || {};
+  const run = focusRun();
+  const tests = (run || {}).tests || {};
+  const items = missionItems();
+  const progress = run ? runProgress(run) : (reference.responding ? 100 : 50);
+  return `<section>
+    <article class="mission-hero">
+      <div class="row">
+        <div>
+          <div class="subtle">Theo OS Mission Control</div>
+          <div class="title" style="font-size:20px">Spartacus-first Agent OS cockpit</div>
+        </div>
+        <span class="pill ${nodeStatusClass(reference)}">${esc(reference.status || "loading")}</span>
+      </div>
+      <p class="muted">Live read model for dispatches, runs, receipts, approvals, artifacts, and the Spartacus VPS proof. The command composer is visible but intentionally inert until the receipt gate lands.</p>
+      <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+      <div class="timeline-meta">
+        <span class="pill success">admin gate</span>
+        <span class="pill">gateway-owned auth</span>
+        <span class="pill">${esc((appState.artifacts || []).length)} artifacts</span>
+        <span class="pill">tests ${esc(tests.passed ?? 0)} / ${esc(tests.failed ?? 0)}</span>
+      </div>
+    </article>
+    <div class="timeline">${items.map(timelineItem).join("") || empty("No mission activity yet.")}</div>
+    <form class="composer" onsubmit="composerBoundary(event)">
+      <div class="composer-row">
+        <button type="button" onclick="manualRefresh()">+</button>
+        <input aria-label="Mission command composer" placeholder="Type /status, /receipt, /control, or mention an agent..." autocomplete="off">
+        <button type="button" onclick="current='Control'; render()">@Spartacus</button>
+        <button type="submit">Stage</button>
+      </div>
+      <div class="composer-status" id="composer-status">Composer is read-only in this slice; no command is dispatched from Glass.</div>
+    </form>
+  </section>`;
+}
+function renderMissionRail() {
+  if (!appState) return "";
+  const reference = (appState.control_nodes || []).find(n => n.reference) || {};
+  const run = focusRun();
+  const tests = (run || {}).tests || {};
+  const artifacts = (appState.artifacts || []).slice(0, 4);
+  const gateLabel = appState.writes_enabled ? "admin session" : "read-only gate";
+  const receiptPreview = run ? `${run.summary || "Run receipt"}\nrun_id: ${run.job_id}\nstatus: ${run.status}\nstate: ${run.state}\nresult: ${run.result_path || ""}` : "No focused run yet.";
+  return `<div class="rail-header">
+    <div>
+      <div class="rail-title">Mission Details</div>
+      <div class="subtle">${esc(run ? `Run ${short(run.job_id)}` : "Spartacus proof")}</div>
+    </div>
+    <span class="pill ${nodeStatusClass(reference)}">${esc(reference.status || "loading")}</span>
+  </div>
+  <section class="rail-section">
+    <div class="rail-grid">
+      <div class="metric"><div class="subtle">Run status</div><div class="metric-value">${esc(run ? run.status : "standby")}</div><div class="subtle">${esc(run ? run.state : "gateway proof")}</div></div>
+      <div class="metric"><div class="subtle">Gate</div><div class="metric-value" style="font-size:16px">${esc(gateLabel)}</div><div class="subtle">no raw executor</div></div>
+      <div class="metric"><div class="subtle">Tests</div><div class="metric-value">${esc(tests.passed ?? 0)} / ${esc(tests.failed ?? 0)}</div><div class="subtle">passed / failed</div></div>
+      <div class="metric"><div class="subtle">Proof</div><div class="metric-value" style="font-size:16px">${esc(reference.probe || "tcp")}</div><div class="subtle">${Number.isFinite(Number(reference.latency_ms)) ? `${esc(reference.latency_ms)}ms` : "pending"}</div></div>
+    </div>
+  </section>
+  <section class="rail-section">
+    <div class="row"><div class="title">Artifacts</div><span class="pill">${esc(artifacts.length)}</span></div>
+    <div class="stack" style="gap:8px;margin-top:10px">${artifacts.map(a => `<div class="row">
+      <div><div class="title" style="font-size:13px">${esc(a.title || a.path || "artifact")}</div><div class="subtle">${esc(a.artifact_type || "file")} / ${esc(short(a.source_job))}</div></div>
+      <button onclick="current='Artifacts'; render()">Open</button>
+    </div>`).join("") || `<p class="muted">No artifacts yet.</p>`}</div>
+  </section>
+  <section class="rail-section">
+    <div class="row"><div class="title">Receipt preview</div>${run ? `<button onclick="current='Runs'; render(); openRun('${esc(run.job_id)}')">Full receipt</button>` : ""}</div>
+    <pre>${esc(receiptPreview)}</pre>
+  </section>
+  <section class="rail-section">
+    <div class="title">Next action</div>
+    <div class="stack" style="gap:8px;margin-top:10px">
+      <a class="button" target="_blank" rel="noreferrer" href="${esc(reference.route || "/control/spartacus/")}">Open Spartacus Control</a>
+      <button onclick="manualRefresh()">Refresh Spartacus status</button>
+      <button onclick="current='Artifacts'; render()">Open artifacts</button>
+    </div>
+    <p class="subtle">Mutating actions wait for confirm + receipt gates; this panel observes and routes.</p>
+  </section>`;
 }
 function proofRow(label, ok, detail) {
   return `<div class="row" style="align-items:flex-start;border-top:1px solid var(--line);padding:9px 0">
@@ -1533,7 +2003,10 @@ function empty(text) { return `<article class="card"><p>${esc(text)}</p></articl
 function render() {
   tabBar();
   if (!appState) return;
+  const heading = document.getElementById("channel-heading");
+  if (heading) heading.textContent = channelLabel(current);
   const renderers = {
+    "Mission Control": renderMission,
     "Runs": renderRuns,
     "Mouth": renderMouth,
     "Control": renderControl,
@@ -1545,6 +2018,8 @@ function render() {
     "Security": renderSecurity
   };
   document.getElementById("app").innerHTML = renderers[current]();
+  const rail = document.getElementById("detail-rail");
+  if (rail) rail.innerHTML = renderMissionRail();
 }
 tabBar();
 document.getElementById("refresh-btn").onclick = manualRefresh;
@@ -1565,7 +2040,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.5.2"
+    server_version = "TheoAgentOSGlass/0.5.6"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

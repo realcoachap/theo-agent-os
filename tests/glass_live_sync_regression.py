@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.4 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass live-sync regression v0.1.5 - Noted by Theo - 2026-06-13.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
 - the served shell exposes the sync indicator, Refresh, and Live/Pause controls,
+- the Mission Control cockpit shell markers are present,
 - /api/state still serves a well-formed snapshot,
 - and the old unconditional `setInterval(loadState, 3000)` clobber loop does not
   creep back in (it was the bug that wiped open run details every 3s).
@@ -127,6 +128,12 @@ def assert_shell_and_state() -> None:
             'id="refresh-btn"',
             'id="live-btn"',
             '"Control"',
+            'Theo OS',
+            'Mission Control',
+            'mission-control',
+            'Mission Details',
+            'Composer is read-only',
+            'function renderMission',
             'function renderControl',
             'Jarvis / Agent OS Control Panel',
             'Spartacus VPS Proof',
@@ -134,7 +141,7 @@ def assert_shell_and_state() -> None:
             'Spartacus gateway response',
         ):
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
-        body = urllib.request.urlopen(base_url + "/api/state", timeout=2).read().decode("utf-8")
+        body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
         for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")

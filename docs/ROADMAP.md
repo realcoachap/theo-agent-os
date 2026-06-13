@@ -31,9 +31,10 @@ Noted by Theo - 2026-06-09
   `/control/spartacus/` reaches Spartacus' Control UI, `/control/` remains the
   Spartacus compatibility alias, and Glass verifies both network reachability
   and app-layer gateway response from the web tier.
-- The Control tab is the Jarvis / Agent OS cockpit proof surface for Spartacus:
-  proof chain, operator routes, and future-node placeholders only. Mutating
-  node actions wait for confirm + receipt gates.
+- Glass v0.5.6 adds the first Jarvis / Agent OS cockpit shell above that proof:
+  left workspace/channel/agent rail, live mission timeline, right Mission
+  Details rail, and an inert command composer stub. Mutating node actions still
+  wait for confirm + receipt gates.
 - Caesar and Theokoles are registry entries, but their routes stay disabled
   until Railway can reach their gateways through Tailscale or another guarded
   relay.

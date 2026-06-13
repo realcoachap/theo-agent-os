@@ -206,15 +206,20 @@ Glass is deliberately read-mostly. It can append memory proposal verdicts to
 `memory/queue.jsonl` and update manual security checklist timestamps in
 `security/checklist.json`; it cannot dispatch jobs.
 
-In Railway admin mode, Glass also exposes the Spartacus VPS proof-of-concept:
-a strict, admin-gated OpenClaw Control node registry where
+In Railway admin mode, Glass now opens on a Theo OS Mission Control cockpit:
+a left workspace/channel/agent rail, center live timeline, right Mission
+Details rail, and an inert command composer stub. The cockpit renders from the
+existing `/api/state` snapshot, so it can show runs, Mouth records, receipts,
+artifacts, workers, and the Spartacus proof without adding a new executor.
+
+Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
+OpenClaw Control node registry where
 `/control/spartacus/` is the canonical Spartacus route and `/control/` remains
 its compatibility alias. Glass probes the configured Spartacus gateway from the
 web tier, verifies an app-layer gateway response, and marks it as the reference
-remote node, proving the path without a physical machine. The Control tab is the
-first Jarvis / Agent OS cockpit surface for this proof: it shows the Spartacus
-proof chain, operator entry routes, and future nodes without exposing write
-actions yet. Caesar and Theokoles remain registry entries, but stay disabled
+remote node, proving the path without a physical machine. The Spartacus action
+surface remains refresh/deep-link only for now; mutating controls wait for
+confirm + receipt gates. Caesar and Theokoles remain registry entries, but stay disabled
 until Railway can reach them through Tailscale or another guarded relay. The
 proxy stores no gateway token, strips Glass cookies and auth headers
 before forwarding upstream, strips upstream cookies before returning responses,

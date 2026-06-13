@@ -62,9 +62,10 @@ environment-variable UI or CLI.
 - Glass still does not execute shell commands, dispatch jobs, push code, or
   proxy arbitrary OpenClaw upstreams.
 - Glass now uses a strict allowlisted node registry. Spartacus is the reference
-  remote/VPS POC and the Jarvis / Agent OS cockpit proof surface; Caesar and
-  Theokoles are present as disabled/planned entries until Railway can reach
-  their gateways through Tailscale or another guarded relay.
+  remote/VPS POC, surfaced through the Theo OS Mission Control cockpit shell
+  added in v0.5.6. Caesar and Theokoles are present as disabled/planned entries
+  until Railway can reach their gateways through Tailscale or another guarded
+  relay.
 
 ## First Proof
 
@@ -78,6 +79,7 @@ environment-variable UI or CLI.
 6. Logout clears the session cookie.
 
 This document originally described the Shot 4 admin foundation before the
-Spartacus Control proxy landed. The current next layer is Caesar/Theokoles
-reachability plus live-state sync/action design without broadening Glass into
-raw shell or arbitrary tunnel access.
+Spartacus Control proxy landed. The current next layer is confirm + receipt
+action gates for the inert Mission Control composer, plus Caesar/Theokoles
+reachability, without broadening Glass into raw shell or arbitrary tunnel
+access.

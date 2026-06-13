@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.6 Theo OS Mission Control cockpit: left workspace/channel/agent
+  rail, center live mission timeline, right Mission Details rail, and an inert
+  command composer stub. The new shell renders from existing `/api/state` data,
+  keeps Spartacus as the VPS proof target, and limits actions to safe refresh
+  or deep-link routes until confirm + receipt gates exist.
 - Glass v0.5.1 admin-gated `/control/` proxy for the Spartacus OpenClaw
   gateway Control UI, including HTTP asset forwarding, WebSocket upgrade
   tunneling, stripped admin cookies, and `tests/glass_control_proxy_regression.py`.

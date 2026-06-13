@@ -123,3 +123,16 @@ Noted by Theo - 2026-06-09
   `98 Indexes/chat-import-staged.jsonl`.)
 - [ ] Add direct OpenBrain `chat_exports` ingest lane after the generated vault
   output is reviewed.
+
+## 2026-06-13 Task: Theo OS Mission Control UI
+
+- [x] Pull Claude CLI second opinion framed as Jarvis / Agent OS and preserve
+  the key safety boundary: Glass observes/routes; it does not execute commands.
+- [x] Build the first three-pane Mission Control cockpit in `bin/glass`.
+- [x] Render the left workspace/channel/agent rail, center live mission
+  timeline, right Mission Details rail, and read-only composer stub from
+  existing `/api/state` data.
+- [x] Keep Spartacus as the VPS proof target and limit action controls to
+  refresh/deep-link routes.
+- [x] Add regression markers for the new cockpit shell.
+- [ ] Deploy to Railway and verify the live authenticated panel.
