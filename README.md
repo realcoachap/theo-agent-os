@@ -210,10 +210,13 @@ In Railway admin mode, Glass also exposes the Spartacus VPS proof-of-concept:
 a strict, admin-gated OpenClaw Control node registry where
 `/control/spartacus/` is the canonical Spartacus route and `/control/` remains
 its compatibility alias. Glass probes the configured Spartacus gateway from the
-web tier and marks it as the reference remote node, proving the path without a
-physical machine. Caesar and Theokoles remain registry entries, but stay
-disabled until Railway can reach them through Tailscale or another guarded
-relay. The proxy stores no gateway token, strips Glass cookies and auth headers
+web tier, verifies an app-layer gateway response, and marks it as the reference
+remote node, proving the path without a physical machine. The Control tab is the
+first Jarvis / Agent OS cockpit surface for this proof: it shows the Spartacus
+proof chain, operator entry routes, and future nodes without exposing write
+actions yet. Caesar and Theokoles remain registry entries, but stay disabled
+until Railway can reach them through Tailscale or another guarded relay. The
+proxy stores no gateway token, strips Glass cookies and auth headers
 before forwarding upstream, strips upstream cookies before returning responses,
 and keeps each OpenClaw gateway's own token/device-pairing checks as the real
 authority. Arbitrary upstream dashboard URLs stay out of scope.

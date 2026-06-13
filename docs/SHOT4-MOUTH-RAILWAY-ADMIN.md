@@ -54,16 +54,17 @@ environment-variable UI or CLI.
 - `/control/spartacus/` is available only behind the Glass admin login as the
   guarded Spartacus VPS proof-of-concept route. `/control/` remains a
   compatibility alias. Glass probes the configured Spartacus gateway from the
-  web tier so the admin UI can show whether the remote VPS path is reachable.
+  web tier and verifies an app-layer response so the admin UI can show whether
+  the remote VPS path is actually answering, not only whether the port is open.
   The proxy stores no gateway token, strips Glass admin cookies/auth headers
   upstream, strips upstream cookies on the way back, and relies on Spartacus
   gateway token/device-pairing checks.
 - Glass still does not execute shell commands, dispatch jobs, push code, or
   proxy arbitrary OpenClaw upstreams.
 - Glass now uses a strict allowlisted node registry. Spartacus is the reference
-  remote/VPS POC; Caesar and Theokoles are present as disabled/planned entries
-  until Railway can reach their gateways through Tailscale or another guarded
-  relay.
+  remote/VPS POC and the Jarvis / Agent OS cockpit proof surface; Caesar and
+  Theokoles are present as disabled/planned entries until Railway can reach
+  their gateways through Tailscale or another guarded relay.
 
 ## First Proof
 

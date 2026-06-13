@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.4 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.5 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -21,6 +21,11 @@ stays live, `/control/` remains a compatibility alias, and
 v0.5.4 makes Spartacus the explicit VPS proof-of-concept path. Glass now probes
 configured Control nodes from the web tier and shows Spartacus as the reference
 remote node, so the POC is visible without needing a physical machine.
+
+v0.5.5 turns the Control tab into a Spartacus-first Jarvis / Agent OS panel:
+one proof chain, clear operator entry routes, app-layer gateway response checks,
+and future nodes demoted to planned reachability instead of competing with the
+VPS POC.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -315,9 +320,9 @@ def control_node_target(node_id: str) -> tuple[str, int]:
 
 
 def control_node_health(node_id: str, host: str, port: int) -> dict[str, object]:
-    """Small cached socket proof that Railway can reach a configured gateway."""
+    """Small cached proof that Railway can reach and hear a gateway."""
     if not host:
-        return {"status": "planned", "reachable": False, "checked_at": "", "latency_ms": None}
+        return {"status": "planned", "reachable": False, "responding": False, "checked_at": "", "latency_ms": None}
     cache_key = f"{node_id}:{host}:{port}"
     now = time.monotonic()
     cached = CONTROL_NODE_HEALTH_CACHE.get(cache_key)
@@ -329,20 +334,47 @@ def control_node_health(node_id: str, host: str, port: int) -> dict[str, object]
     try:
         with socket.create_connection((host, port), timeout=CONTROL_NODE_PROBE_TIMEOUT_SECONDS):
             pass
-        health: dict[str, object] = {
-            "status": "online",
-            "reachable": True,
-            "checked_at": checked_at,
-            "latency_ms": int((time.monotonic() - started) * 1000),
-        }
     except OSError as exc:
         health = {
             "status": "unreachable",
             "reachable": False,
+            "responding": False,
             "checked_at": checked_at,
             "latency_ms": None,
             "error": type(exc).__name__,
         }
+        CONTROL_NODE_HEALTH_CACHE[cache_key] = (now, health)
+        return dict(health)
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    health = {
+        "status": "reachable",
+        "reachable": True,
+        "responding": False,
+        "checked_at": checked_at,
+        "latency_ms": latency_ms,
+        "http_status": None,
+        "probe": "tcp",
+    }
+    connection = http.client.HTTPConnection(host, port, timeout=CONTROL_NODE_PROBE_TIMEOUT_SECONDS)
+    try:
+        connection.request("GET", "/", headers={"Host": f"{host}:{port}"})
+        response = connection.getresponse()
+        body = response.read(4096)
+        app_marker = b"OpenClaw" in body or b"Control" in body or b"openclaw" in body.lower()
+        if response.status < 500:
+            health.update({
+                "status": "responding",
+                "responding": True,
+                "http_status": response.status,
+                "probe": "control-ui" if app_marker else "http",
+            })
+        else:
+            health.update({"status": "degraded", "http_status": response.status, "error": f"http_{response.status}"})
+    except Exception as exc:
+        health.update({"status": "degraded", "error": type(exc).__name__})
+    finally:
+        connection.close()
     CONTROL_NODE_HEALTH_CACHE[cache_key] = (now, health)
     return dict(health)
 
@@ -352,7 +384,15 @@ def control_nodes() -> list[dict[str, object]]:
     for node_id, definition in CONTROL_NODE_DEFINITIONS.items():
         host, port = control_node_target(node_id)
         enabled = bool(host)
-        health = control_node_health(node_id, host, port) if enabled else {"status": "planned", "reachable": False, "checked_at": "", "latency_ms": None}
+        health = control_node_health(node_id, host, port) if enabled else {
+            "status": "planned",
+            "reachable": False,
+            "responding": False,
+            "checked_at": "",
+            "latency_ms": None,
+            "http_status": None,
+            "probe": "",
+        }
         nodes.append({
             "id": node_id,
             "label": definition["label"],
@@ -361,8 +401,11 @@ def control_nodes() -> list[dict[str, object]]:
             "enabled": enabled,
             "status": health["status"],
             "reachable": health["reachable"],
+            "responding": health["responding"],
             "checked_at": health["checked_at"],
             "latency_ms": health["latency_ms"],
+            "http_status": health.get("http_status"),
+            "probe": health.get("probe", ""),
             "error": health.get("error", ""),
             "target": f"{host}:{port}" if enabled else "",
             "note": definition["note"],
@@ -1347,27 +1390,66 @@ function renderMouth() {
   </section>`;
 }
 function nodeStatusClass(n) {
-  if (n.status === "online") return "success";
-  if (n.status === "planned") return "blocked";
+  if (["online", "responding", "reachable"].includes(n.status)) return "success";
+  if (["planned", "degraded"].includes(n.status)) return "blocked";
   return "failed";
+}
+function proofRow(label, ok, detail) {
+  return `<div class="row" style="align-items:flex-start;border-top:1px solid var(--line);padding:9px 0">
+    <div>
+      <div class="title" style="font-size:13px">${esc(label)}</div>
+      <div class="subtle">${esc(detail)}</div>
+    </div>
+    <span class="pill ${ok ? "success" : "blocked"}">${ok ? "ready" : "blocked"}</span>
+  </div>`;
 }
 function renderControl() {
   const nodes = appState.control_nodes || [];
+  const reference = nodes.find(n => n.reference) || nodes[0] || {};
+  const futureNodes = nodes.filter(n => !n.reference);
+  const hasLatency = Number.isFinite(Number(reference.latency_ms));
+  const checked = reference.checked_at ? `${timeLabel(reference.checked_at)}${hasLatency ? ` · ${reference.latency_ms}ms` : ""}` : "not checked yet";
   return `<section class="stack">
-    <div class="grid">${nodes.map(n => `<article class="card">
+    <article class="card detail">
+      <div class="row">
+        <div>
+          <div class="subtle">Jarvis / Agent OS Control Panel</div>
+          <div class="title" style="font-size:20px">Spartacus VPS Proof</div>
+        </div>
+        <span class="pill ${nodeStatusClass(reference)}">${esc(reference.status || "unknown")}</span>
+      </div>
+      <p class="muted">Spartacus is the reference remote node: a VPS-backed OpenClaw gateway reachable from Glass through Railway. This proves the operator surface without a physical machine.</p>
+      <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+        <a class="button" target="_blank" rel="noreferrer" href="${esc(reference.route || "/control/spartacus/")}">Open Spartacus Control</a>
+        <a class="button" target="_blank" rel="noreferrer" href="/control/">Open Compatibility Route</a>
+        <span class="pill success">admin-gated</span>
+        <span class="pill">gateway-owned auth</span>
+      </div>
+      <div class="mono subtle" style="margin-top:8px">Spartacus remote gateway configured</div>
+      <div class="subtle">last gateway probe ${esc(checked)}${reference.http_status ? ` · HTTP ${esc(reference.http_status)}` : ""}${reference.probe ? ` · ${esc(reference.probe)}` : ""}</div>
+      ${reference.error ? `<div class="blocked-box">probe failed: ${esc(reference.error)}</div>` : ""}
+    </article>
+    <article class="card detail">
+      <div class="title">Proof Chain</div>
+      ${proofRow("Glass admin door", (appState.admin || {}).authenticated || appState.mode === "local", "Single-operator login gates the Railway control surface before any upstream proxying.")}
+      ${proofRow("Railway to Spartacus gateway", reference.reachable, `Socket probe from Glass web tier. ${hasLatency ? `${reference.latency_ms}ms observed.` : ""}`)}
+      ${proofRow("Spartacus gateway response", reference.responding, reference.http_status ? `Gateway returned HTTP ${reference.http_status}; probe=${reference.probe || "http"}.` : "Port is reachable, but the gateway did not complete an app-layer response.")}
+      ${proofRow("Control UI route", Boolean(reference.route), `${reference.route || "/control/spartacus/"} is the canonical operator entry; /control/ remains the old alias.`)}
+      ${proofRow("Spartacus authority", true, "OpenClaw gateway token and device pairing stay on Spartacus; Glass stores no gateway token.")}
+    </article>
+    <div class="grid">${futureNodes.map(n => `<article class="card">
       <div class="row"><div class="title">${esc(n.label)}</div><span class="pill ${nodeStatusClass(n)}">${esc(n.status)}</span></div>
       <div class="subtle">${esc(n.role)}</div>
-      ${n.reference ? `<div class="pill success">VPS proof target</div>` : ""}
       <p>${esc(n.note)}</p>
       <div class="subtle">${esc(n.proof || "")}</div>
       ${n.target ? `<div class="mono subtle">${esc(n.target)}</div>` : ""}
       ${n.checked_at ? `<div class="subtle">checked ${esc(timeLabel(n.checked_at))}${n.latency_ms !== null ? ` · ${esc(n.latency_ms)}ms` : ""}</div>` : ""}
       ${n.error ? `<div class="blocked-box">probe failed: ${esc(n.error)}</div>` : ""}
       ${n.enabled ? `<p><a class="button" target="_blank" rel="noreferrer" href="${esc(n.route)}">Open ${esc(n.label)} Control</a></p>` : `<div class="blocked-box">Network path not configured yet.</div>`}
-    </article>`).join("") || empty("No Control nodes configured.")}</div>
+    </article>`).join("") || empty("No future Control nodes configured.")}</div>
     <article class="card detail">
-      <div class="title">Spartacus POC Contract</div>
-      <p class="muted">Spartacus is the reference remote node: a VPS-backed OpenClaw gateway reachable from Glass through Railway. Control still requires Glass admin login plus the Spartacus gateway token and device pairing.</p>
+      <div class="title">Operating Boundary</div>
+      <p class="muted">This panel is the proof and entry surface. It does not execute shell commands, dispatch jobs, or accept arbitrary gateway URLs. Action buttons come next only behind confirm + receipt gates.</p>
       <div class="mono subtle">canonical /control/spartacus/ · compatibility /control/ -> Spartacus · no arbitrary gateway URLs</div>
     </article>
   </section>`;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.2 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass live-sync regression v0.1.4 - Noted by Theo - 2026-06-13.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -122,7 +122,17 @@ def assert_shell_and_state() -> None:
     try:
         wait_for_glass(base_url, proc)
         html = urllib.request.urlopen(base_url + "/", timeout=2).read().decode("utf-8")
-        for marker in ('id="sync-status"', 'id="refresh-btn"', 'id="live-btn"', '"Control"', 'function renderControl', 'Spartacus POC Contract'):
+        for marker in (
+            'id="sync-status"',
+            'id="refresh-btn"',
+            'id="live-btn"',
+            '"Control"',
+            'function renderControl',
+            'Jarvis / Agent OS Control Panel',
+            'Spartacus VPS Proof',
+            'Proof Chain',
+            'Spartacus gateway response',
+        ):
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=2).read().decode("utf-8")
         snapshot = json.loads(body)
@@ -133,6 +143,7 @@ def assert_shell_and_state() -> None:
         spartacus = next(node for node in snapshot["control_nodes"] if node.get("id") == "spartacus")
         assert_true(spartacus.get("reference") is True, "Spartacus is no longer marked as the reference POC")
         assert_true(spartacus.get("proof"), "Spartacus reference POC proof text is missing")
+        assert_true("responding" in spartacus, "Spartacus node health is missing app-layer response state")
     finally:
         proc.terminate()
         try:

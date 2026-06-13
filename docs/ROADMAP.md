@@ -29,8 +29,11 @@ Noted by Theo - 2026-06-09
 - Current Railway admin mode includes the Spartacus VPS proof-of-concept: a
   strict allowlisted OpenClaw Control node registry where
   `/control/spartacus/` reaches Spartacus' Control UI, `/control/` remains the
-  Spartacus compatibility alias, and Glass probes Spartacus gateway reachability
-  from the web tier.
+  Spartacus compatibility alias, and Glass verifies both network reachability
+  and app-layer gateway response from the web tier.
+- The Control tab is the Jarvis / Agent OS cockpit proof surface for Spartacus:
+  proof chain, operator routes, and future-node placeholders only. Mutating
+  node actions wait for confirm + receipt gates.
 - Caesar and Theokoles are registry entries, but their routes stay disabled
   until Railway can reach their gateways through Tailscale or another guarded
   relay.
