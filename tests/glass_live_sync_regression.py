@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.0 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass live-sync regression v0.1.1 - Noted by Theo - 2026-06-13.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -122,12 +122,14 @@ def assert_shell_and_state() -> None:
     try:
         wait_for_glass(base_url, proc)
         html = urllib.request.urlopen(base_url + "/", timeout=2).read().decode("utf-8")
-        for marker in ('id="sync-status"', 'id="refresh-btn"', 'id="live-btn"'):
+        for marker in ('id="sync-status"', 'id="refresh-btn"', 'id="live-btn"', '"Control"', 'function renderControl'):
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=2).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
+        node_ids = {node.get("id") for node in snapshot["control_nodes"]}
+        assert_true({"spartacus", "caesar", "theokoles"}.issubset(node_ids), "/api/state missing Control node registry")
     finally:
         proc.terminate()
         try:

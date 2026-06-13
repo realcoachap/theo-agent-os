@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.2 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.3 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -13,6 +13,10 @@ the real authority.
 
 v0.5.2 preserves deep links after successful admin login, so `/control/#token=...`
 continues to the Control UI instead of dropping Coach on the Glass root.
+
+v0.5.3 turns the one-off Control proxy into a closed node registry. Spartacus
+stays live, `/control/` remains a compatibility alias, and
+`/control/<node>/` becomes the canonical shape for multi-node Mission Control.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -75,6 +79,33 @@ CONTROL_PROXY_TARGET_HOST_ENV = "THEO_GLASS_CONTROL_PROXY_HOST"
 CONTROL_PROXY_TARGET_PORT_ENV = "THEO_GLASS_CONTROL_PROXY_PORT"
 CONTROL_PROXY_TARGET_HOST_DEFAULT = "185.111.156.109"
 CONTROL_PROXY_TARGET_PORT_DEFAULT = 18789
+CONTROL_PROXY_LEGACY_ALIAS_SEGMENTS = {"", "assets", "favicon.ico", "manifest.json"}
+CONTROL_NODE_DEFINITIONS = {
+    "spartacus": {
+        "label": "Spartacus",
+        "role": "Contabo VPS",
+        "default_host": CONTROL_PROXY_TARGET_HOST_DEFAULT,
+        "default_port": CONTROL_PROXY_TARGET_PORT_DEFAULT,
+        "note": "live Railway baseline",
+        "legacy_env": True,
+    },
+    "caesar": {
+        "label": "Caesar",
+        "role": "LAN agent",
+        "default_host": "",
+        "default_port": 18789,
+        "note": "needs Tailscale or guarded relay from Railway",
+        "legacy_env": False,
+    },
+    "theokoles": {
+        "label": "Theokoles",
+        "role": "home operator",
+        "default_host": "",
+        "default_port": 18789,
+        "note": "needs Tailscale or guarded relay from Railway",
+        "legacy_env": False,
+    },
+}
 CONTROL_PROXY_TIMEOUT_SECONDS = 30
 CONTROL_PROXY_TUNNEL_IDLE_SECONDS = 300
 CONTROL_PROXY_HOP_HEADERS = {
@@ -248,23 +279,88 @@ def cookie_header(value: str, max_age: int | None = None) -> str:
     return "; ".join(pieces)
 
 
-def control_proxy_target() -> tuple[str, int]:
-    """Resolve the Spartacus gateway target without storing tokens in Glass."""
-    host = os.environ.get(CONTROL_PROXY_TARGET_HOST_ENV, CONTROL_PROXY_TARGET_HOST_DEFAULT).strip()
+def control_node_env_name(node_id: str, suffix: str) -> str:
+    return f"THEO_GLASS_CONTROL_{node_id.upper()}_{suffix}"
+
+
+def control_node_target(node_id: str) -> tuple[str, int]:
+    """Resolve a known gateway target without storing OpenClaw tokens in Glass."""
+    definition = CONTROL_NODE_DEFINITIONS[node_id]
+    host = os.environ.get(control_node_env_name(node_id, "HOST"), "").strip()
+    if not host and definition.get("legacy_env"):
+        host = os.environ.get(CONTROL_PROXY_TARGET_HOST_ENV, "").strip()
+    if not host:
+        host = str(definition["default_host"]).strip()
+
+    port_text = os.environ.get(control_node_env_name(node_id, "PORT"), "").strip()
+    if not port_text and definition.get("legacy_env"):
+        port_text = os.environ.get(CONTROL_PROXY_TARGET_PORT_ENV, "").strip()
+    if not port_text:
+        port_text = str(definition["default_port"])
     try:
-        port = int(os.environ.get(CONTROL_PROXY_TARGET_PORT_ENV, str(CONTROL_PROXY_TARGET_PORT_DEFAULT)))
+        port = int(port_text)
     except ValueError:
-        port = CONTROL_PROXY_TARGET_PORT_DEFAULT
-    return host or CONTROL_PROXY_TARGET_HOST_DEFAULT, port
+        port = int(definition["default_port"])
+    return host, port
+
+
+def control_nodes() -> list[dict[str, object]]:
+    nodes: list[dict[str, object]] = []
+    for node_id, definition in CONTROL_NODE_DEFINITIONS.items():
+        host, port = control_node_target(node_id)
+        enabled = bool(host)
+        nodes.append({
+            "id": node_id,
+            "label": definition["label"],
+            "role": definition["role"],
+            "route": f"{CONTROL_PROXY_PREFIX}/{node_id}/" if enabled else "",
+            "enabled": enabled,
+            "status": "configured" if enabled else "planned",
+            "target": f"{host}:{port}" if enabled else "",
+            "note": definition["note"],
+        })
+    return nodes
+
+
+def control_default_url() -> str:
+    host, _port = control_node_target("spartacus")
+    if REMOTE_REVIEW or not host:
+        return ""
+    return f"{CONTROL_PROXY_PREFIX}/spartacus/"
+
+
+def control_proxy_target(node_id: str = "spartacus") -> tuple[str, int]:
+    return control_node_target(node_id)
 
 
 def is_control_proxy_path(path: str) -> bool:
     return path == CONTROL_PROXY_PREFIX or path.startswith(f"{CONTROL_PROXY_PREFIX}/")
 
 
-def control_upstream_path(path: str) -> str:
+def resolve_control_proxy_route(path: str) -> tuple[str, str] | None:
+    """Map a request path to a closed registry node and prefix.
+
+    `/control/` and existing absolute asset paths like `/control/assets/*`
+    remain Spartacus aliases. Named prefixes like `/control/spartacus/` are
+    canonical. Unknown node-looking segments fail closed instead of becoming an
+    arbitrary upstream path.
+    """
+    if not is_control_proxy_path(path):
+        return None
+    if path == CONTROL_PROXY_PREFIX:
+        return "spartacus", CONTROL_PROXY_PREFIX
+    remainder = path[len(f"{CONTROL_PROXY_PREFIX}/"):]
+    first_segment = remainder.split("/", 1)[0]
+    if first_segment in CONTROL_NODE_DEFINITIONS:
+        return first_segment, f"{CONTROL_PROXY_PREFIX}/{first_segment}"
+    if first_segment in CONTROL_PROXY_LEGACY_ALIAS_SEGMENTS:
+        return "spartacus", CONTROL_PROXY_PREFIX
+    return None
+
+
+def control_upstream_path(path: str, prefix: str = CONTROL_PROXY_PREFIX) -> str:
     parsed = urlparse(path)
-    suffix = parsed.path[len(CONTROL_PROXY_PREFIX):] if parsed.path.startswith(CONTROL_PROXY_PREFIX) else parsed.path
+    suffix = parsed.path[len(prefix):] if parsed.path.startswith(prefix) else parsed.path
     if not suffix:
         suffix = "/"
     if not suffix.startswith("/"):
@@ -272,9 +368,9 @@ def control_upstream_path(path: str) -> str:
     return f"{suffix}?{parsed.query}" if parsed.query else suffix
 
 
-def proxy_request_headers(headers) -> dict[str, str]:
+def proxy_request_headers(headers, node_id: str = "spartacus") -> dict[str, str]:
     proxied: dict[str, str] = {}
-    host, port = control_proxy_target()
+    host, port = control_proxy_target(node_id)
     for key, value in headers.items():
         lower = key.lower()
         if lower in CONTROL_PROXY_HOP_HEADERS or lower in CONTROL_PROXY_PRIVATE_HEADERS or lower == "host":
@@ -284,11 +380,14 @@ def proxy_request_headers(headers) -> dict[str, str]:
     return proxied
 
 
-def proxy_response_headers(headers) -> list[tuple[str, str]]:
+def proxy_response_headers(headers, prefix: str = CONTROL_PROXY_PREFIX) -> list[tuple[str, str]]:
     proxied: list[tuple[str, str]] = []
     for key, value in headers:
-        if key.lower() in CONTROL_PROXY_HOP_HEADERS:
+        lower = key.lower()
+        if lower in CONTROL_PROXY_HOP_HEADERS or lower == "set-cookie":
             continue
+        if lower == "location" and value.startswith("/"):
+            value = f"{prefix}{value}"
         proxied.append((key, value))
     return proxied
 
@@ -768,7 +867,8 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "mouth_replies": mouth_replies(),
         "workers": workers(),
         "security": security_checklist(),
-        "control_ui_url": "" if (REMOTE_REVIEW or REMOTE_ADMIN) else "http://127.0.0.1:18789",
+        "control_nodes": control_nodes(),
+        "control_ui_url": control_default_url(),
     }
 
 
@@ -928,7 +1028,7 @@ pre {
 <nav class="tabs" id="tabs"></nav>
 <main id="app"></main>
 <script>
-const tabs = ["Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
+const tabs = ["Runs", "Mouth", "Control", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
 let current = "Runs";
 let appState = null;
 
@@ -956,9 +1056,10 @@ function stateSignature(s) {
   const sec = (((s.security || {}).items) || []).map(i => `${i.id}:${i.checked ? 1 : 0}`);
   const props = (s.memory_proposals || []).map(p => p.id);
   const reg = (((s.workers || {}).registry || {}).workers || []).map(w => `${w.name}:${w.status || ""}`);
+  const control = (s.control_nodes || []).map(n => `${n.id}:${n.status}:${n.enabled ? 1 : 0}:${n.route || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -1195,6 +1296,23 @@ function renderMouth() {
     <div><h2 style="font-size:16px;margin:0 0 8px">Replies</h2><div class="grid">${replies || empty("No Mouth replies yet.")}</div></div>
   </section>`;
 }
+function renderControl() {
+  const nodes = appState.control_nodes || [];
+  return `<section class="stack">
+    <div class="grid">${nodes.map(n => `<article class="card">
+      <div class="row"><div class="title">${esc(n.label)}</div><span class="pill ${n.enabled ? "success" : "blocked"}">${esc(n.status)}</span></div>
+      <div class="subtle">${esc(n.role)}</div>
+      <p>${esc(n.note)}</p>
+      ${n.target ? `<div class="mono subtle">${esc(n.target)}</div>` : ""}
+      ${n.enabled ? `<p><a class="button" target="_blank" rel="noreferrer" href="${esc(n.route)}">Open ${esc(n.label)} Control</a></p>` : `<div class="blocked-box">Network path not configured yet.</div>`}
+    </article>`).join("") || empty("No Control nodes configured.")}</div>
+    <article class="card detail">
+      <div class="title">Registry Rules</div>
+      <p class="muted">Control routes are closed and allowlisted. Glass never accepts gateway hosts, tokens, or node targets from the browser.</p>
+      <div class="mono subtle">canonical /control/&lt;node&gt;/ · compatibility /control/ -> Spartacus</div>
+    </article>
+  </section>`;
+}
 function renderRepoMaps() {
   return `<section class="grid">${(appState.repo_maps || []).map(m => `<article class="card">
     <div class="row"><div class="title">${esc(m.lane)}</div><span class="pill ${m.fresh ? "success" : "blocked"}">${m.fresh ? "FRESH" : "STALE"}</span></div>
@@ -1277,6 +1395,7 @@ function render() {
   const renderers = {
     "Runs": renderRuns,
     "Mouth": renderMouth,
+    "Control": renderControl,
     "Artifacts": renderArtifacts,
     "Repo Maps": renderRepoMaps,
     "Specs": renderSpecs,
@@ -1427,22 +1546,34 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_control_proxy(self) -> None:
         parsed = urlparse(self.path)
+        route = resolve_control_proxy_route(parsed.path)
+        if route is None:
+            self.send_json({"ok": False, "error": "unknown control node"}, 404)
+            return
+        node_id, prefix = route
+
         if self.headers.get("Upgrade", "").lower() == "websocket":
-            self.handle_control_websocket()
+            self.handle_control_websocket(node_id, prefix)
             return
 
-        if parsed.path == CONTROL_PROXY_PREFIX:
+        if parsed.path in {CONTROL_PROXY_PREFIX, f"{prefix}"} and not parsed.path.endswith("/"):
             self.send_response(302)
-            self.send_header("Location", f"{CONTROL_PROXY_PREFIX}/")
+            location = f"{parsed.path}/"
+            if parsed.query:
+                location = f"{location}?{parsed.query}"
+            self.send_header("Location", location)
             self.end_headers()
             return
 
-        host, port = control_proxy_target()
-        upstream_path = control_upstream_path(self.path)
+        host, port = control_proxy_target(node_id)
+        if not host:
+            self.send_json({"ok": False, "error": f"control node {node_id} is not configured"}, 503)
+            return
+        upstream_path = control_upstream_path(self.path, prefix)
         connection = http.client.HTTPConnection(host, port, timeout=CONTROL_PROXY_TIMEOUT_SECONDS)
 
         try:
-            connection.request(self.command, upstream_path, headers=proxy_request_headers(self.headers))
+            connection.request(self.command, upstream_path, headers=proxy_request_headers(self.headers, node_id))
             response = connection.getresponse()
             body = response.read()
         except Exception as exc:
@@ -1452,16 +1583,19 @@ class Handler(BaseHTTPRequestHandler):
             connection.close()
 
         self.send_response(response.status, response.reason)
-        for key, value in proxy_response_headers(response.getheaders()):
+        for key, value in proxy_response_headers(response.getheaders(), prefix):
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def handle_control_websocket(self) -> None:
+    def handle_control_websocket(self, node_id: str, prefix: str) -> None:
         """Tunnel the Control UI WebSocket after Glass admin auth has passed."""
-        host, port = control_proxy_target()
-        upstream_path = control_upstream_path(self.path)
+        host, port = control_proxy_target(node_id)
+        if not host:
+            self.send_json({"ok": False, "error": f"control node {node_id} is not configured"}, 503)
+            return
+        upstream_path = control_upstream_path(self.path, prefix)
 
         try:
             upstream = socket.create_connection((host, port), timeout=CONTROL_PROXY_TIMEOUT_SECONDS)

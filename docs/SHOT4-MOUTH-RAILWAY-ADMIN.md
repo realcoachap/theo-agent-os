@@ -12,7 +12,10 @@ has two explicit remote modes:
 - `--remote-admin`: single-operator login, enabled only by Railway secrets.
 
 The admin door is for operator UI and limited reviewed actions. It is not a raw
-shell, not a tunnel to localhost, and not a way to bypass Mouth/dispatch.
+shell, not an arbitrary tunnel, and not a way to bypass Mouth/dispatch. Current
+Railway admin mode also exposes `/control/spartacus/` as the guarded Spartacus
+OpenClaw Control route, with `/control/` as its compatibility alias; that route
+keeps Spartacus gateway token and device pairing as the authority.
 
 ## Required Railway Variables
 
@@ -48,9 +51,16 @@ environment-variable UI or CLI.
   stage.
 - Admin writes still require the existing `X-Theo-Glass: 1` header and same-host
   origin checks.
-- The Control UI link remains hidden on Railway.
+- `/control/spartacus/` is available only behind the Glass admin login as a
+  guarded Spartacus OpenClaw Control route. `/control/` remains a compatibility
+  alias. The proxy stores no gateway token, strips Glass admin cookies/auth
+  headers upstream, strips upstream cookies on the way back, and relies on
+  Spartacus gateway token/device-pairing checks.
 - Glass still does not execute shell commands, dispatch jobs, push code, or
-  proxy OpenClaw.
+  proxy arbitrary OpenClaw upstreams.
+- Glass now uses a strict allowlisted node registry. Caesar and Theokoles are
+  present as disabled/planned entries until Railway can reach their gateways
+  through Tailscale or another guarded relay.
 
 ## First Proof
 
@@ -63,5 +73,7 @@ environment-variable UI or CLI.
 5. Repeated bad logins return `429` after the configured failure threshold.
 6. Logout clears the session cookie.
 
-The next layer after this is live-state sync/action design, not broadening the
-admin door.
+This document originally described the Shot 4 admin foundation before the
+Spartacus Control proxy landed. The current next layer is Caesar/Theokoles
+reachability plus live-state sync/action design without broadening Glass into
+raw shell or arbitrary tunnel access.

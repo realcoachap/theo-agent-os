@@ -26,6 +26,12 @@ Noted by Theo - 2026-06-09
 - Build localhost-only Mission Control viewer.
 - Render runs, artifacts, specs, memory proposals, workers, and security.
 - Keep it read-only except proposal queue and manual security checklist.
+- Current Railway admin mode includes a strict allowlisted OpenClaw Control node
+  registry. `/control/spartacus/` reaches Spartacus' Control UI, while
+  `/control/` remains the Spartacus compatibility alias.
+- Caesar and Theokoles are registry entries, but their routes stay disabled
+  until Railway can reach their gateways through Tailscale or another guarded
+  relay.
 
 ## Phase 4 - Hands
 

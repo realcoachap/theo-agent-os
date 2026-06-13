@@ -206,10 +206,15 @@ Glass is deliberately read-mostly. It can append memory proposal verdicts to
 `memory/queue.jsonl` and update manual security checklist timestamps in
 `security/checklist.json`; it cannot dispatch jobs.
 
-In Railway admin mode, Glass also exposes `/control/` as an admin-gated
-HTTP/WebSocket proxy to Spartacus' OpenClaw gateway Control UI. The proxy stores
-no gateway token, strips the Glass admin cookie before forwarding upstream, and
-keeps Spartacus' own token/device-pairing checks as the real authority.
+In Railway admin mode, Glass also exposes a strict, admin-gated OpenClaw
+Control node registry. `/control/spartacus/` is the canonical Spartacus route,
+with `/control/` kept as its compatibility alias. Caesar and Theokoles are
+registry entries that stay disabled until Railway can reach them through
+Tailscale or another guarded relay. The proxy stores no gateway token, strips
+Glass cookies and auth headers before forwarding upstream, strips upstream
+cookies before returning responses, and keeps each OpenClaw gateway's own
+token/device-pairing checks as the real authority. Arbitrary upstream dashboard
+URLs stay out of scope.
 
 Unsafe HTML artifacts show a blocked badge unless the result envelope declares
 `safe_to_render=true`, and artifact preview paths must stay inside their own
@@ -317,7 +322,9 @@ the command's spend approval and the worker's existing `THEO_ENABLE_REAL_*`
 switch.
 
 Glass renders Mouth records as queue/operator state, but Glass still does not
-dispatch, retry, kill, push, or proxy OpenClaw.
+dispatch, retry, kill, or push. In Railway admin mode only, Glass also exposes
+the guarded OpenClaw Control proxy described above; that proxy is a separate
+admin surface and does not give Mouth new execution powers.
 
 ## Railway Admin Door
 
@@ -337,6 +344,7 @@ Generate the password hash locally:
 printf '%s\n' '<admin-password>' | bin/glass --hash-admin-password
 ```
 
-Admin mode uses a signed `HttpOnly` session cookie and keeps the Railway Control
-UI link hidden. It still does not expose raw shell, raw dispatch, git pushes, or
-OpenClaw proxying.
+Admin mode uses a signed `HttpOnly` session cookie. The Railway admin surface now
+includes `/control/spartacus/` as a guarded Spartacus OpenClaw Control route,
+with `/control/` as the compatibility alias. It still does not expose raw shell,
+raw dispatch, git pushes, or arbitrary OpenClaw proxying.

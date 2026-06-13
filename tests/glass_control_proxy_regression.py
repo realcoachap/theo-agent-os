@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass Control proxy regression v0.1.0 - Noted by Theo ☠️ - 2026-06-13.
+"""Theo Agent OS Glass Control proxy regression v0.2.0 - Noted by Theo ☠️ - 2026-06-13.
 
-Proves the v0.5.1 `/control/` proxy keeps the Spartacus OpenClaw Control UI
-reachable through Glass without creating a new Railway resource:
-- `/control/` proxies the gateway HTML,
-- `/control/assets/*` strips the `/control` prefix and forwards assets,
-- the `/control` WebSocket upgrade tunnels cleanly,
-- and Glass admin cookies are not forwarded to the upstream gateway.
+Proves the v0.5.3 node-registry proxy keeps the Spartacus OpenClaw Control UI
+reachable without becoming an arbitrary tunnel:
+- legacy `/control/` and canonical `/control/spartacus/` proxy gateway HTML,
+- asset paths strip either `/control` or `/control/spartacus` correctly,
+- WebSocket upgrades tunnel on both compatibility and node routes,
+- Glass admin cookies/Authorization are not forwarded to the gateway,
+- upstream Set-Cookie headers are not forwarded back onto the Glass origin,
+- and unknown node-looking routes fail closed.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -82,6 +85,7 @@ class FakeGatewayHandler(socketserver.StreamRequestHandler):
                 "HTTP/1.1 200 OK\r\n"
                 f"Content-Type: {content_type}\r\n"
                 f"Content-Length: {len(body)}\r\n"
+                "Set-Cookie: upstream=must-not-leak; Path=/\r\n"
                 "Cache-Control: no-store\r\n\r\n"
             ).encode("ascii")
             + body
@@ -102,15 +106,36 @@ def wait_for_glass(base_url: str, proc: subprocess.Popen[str]) -> None:
     raise AssertionError("Glass server did not become ready")
 
 
-def read_url(url: str, *, cookie: str | None = None) -> str:
-    request = urllib.request.Request(url, headers={"Cookie": cookie} if cookie else {})
-    return urllib.request.urlopen(request, timeout=2).read().decode("utf-8")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001 - stdlib hook signature
+        return None
 
 
-def websocket_probe(host: str, port: int) -> str:
+def read_url(
+    url: str,
+    *,
+    cookie: str | None = None,
+    authorization: str | None = None,
+    follow_redirects: bool = True,
+) -> tuple[int, str, dict[str, str]]:
+    headers = {}
+    if cookie:
+        headers["Cookie"] = cookie
+    if authorization:
+        headers["Authorization"] = authorization
+    request = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener() if follow_redirects else urllib.request.build_opener(NoRedirect)
+    try:
+        response = opener.open(request, timeout=2)
+        return response.status, response.read().decode("utf-8"), {key.lower(): value for key, value in response.headers.items()}
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8"), {key.lower(): value for key, value in exc.headers.items()}
+
+
+def websocket_probe(host: str, port: int, path: str) -> str:
     key = base64.b64encode(b"glass-control-proxy").decode("ascii")
     request = (
-        "GET /control HTTP/1.1\r\n"
+        f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}:{port}\r\n"
         "Connection: Upgrade\r\n"
         "Upgrade: websocket\r\n"
@@ -148,17 +173,54 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{glass_port}"
     try:
         wait_for_glass(base_url, proc)
-        html = read_url(base_url + "/control/", cookie="theo_glass_admin=do-not-forward")
+        status, _body, headers = read_url(base_url + "/control", follow_redirects=False)
+        assert_true(status == 302, "/control did not redirect to /control/")
+        assert_true(headers.get("location") == "/control/", "/control redirect did not target /control/")
+        status, _body, headers = read_url(base_url + "/control/spartacus?x=1", follow_redirects=False)
+        assert_true(status == 302, "/control/spartacus did not redirect to /control/spartacus/")
+        assert_true(headers.get("location") == "/control/spartacus/?x=1", "node redirect did not preserve query string")
+
+        status, html, headers = read_url(
+            base_url + "/control/",
+            cookie="theo_glass_admin=do-not-forward",
+            authorization="Bearer glass-only",
+        )
+        assert_true(status == 200, "/control/ did not return 200")
         assert_true("OpenClaw Control" in html, "/control/ did not return gateway HTML")
-        asset = read_url(base_url + "/control/assets/app.js", cookie="theo_glass_admin=do-not-forward")
+        assert_true("set-cookie" not in headers, "upstream Set-Cookie leaked through legacy route")
+
+        status, asset, _headers = read_url(base_url + "/control/assets/app.js", cookie="theo_glass_admin=do-not-forward")
+        assert_true(status == 200, "/control/assets/* did not return 200")
         assert_true("control asset" in asset, "/control/assets/* did not proxy the asset")
-        upgrade = websocket_probe("127.0.0.1", glass_port)
+
+        status, html, headers = read_url(base_url + "/control/spartacus/?x=1", cookie="theo_glass_admin=do-not-forward")
+        assert_true(status == 200, "/control/spartacus/ did not return 200")
+        assert_true("OpenClaw Control" in html, "/control/spartacus/ did not return gateway HTML")
+        assert_true("set-cookie" not in headers, "upstream Set-Cookie leaked through node route")
+
+        status, asset, _headers = read_url(base_url + "/control/spartacus/assets/app.js", cookie="theo_glass_admin=do-not-forward")
+        assert_true(status == 200, "/control/spartacus/assets/* did not return 200")
+        assert_true("control asset" in asset, "/control/spartacus/assets/* did not proxy the asset")
+
+        status, body, _headers = read_url(base_url + "/control/notreal/")
+        assert_true(status == 404 and "unknown control node" in body, "unknown control node did not fail closed")
+        status, body, _headers = read_url(base_url + "/control/spartacusish/")
+        assert_true(status == 404 and "unknown control node" in body, "prefix collision did not fail closed")
+
+        upgrade = websocket_probe("127.0.0.1", glass_port, "/control")
         assert_true("101 Switching Protocols" in upgrade, "/control WebSocket did not upgrade")
+        upgrade = websocket_probe("127.0.0.1", glass_port, "/control/spartacus")
+        assert_true("101 Switching Protocols" in upgrade, "/control/spartacus WebSocket did not upgrade")
+
         assert_true(REQUESTS[0][0] == "/", "control root was not stripped to upstream root")
         assert_true(REQUESTS[1][0] == "/assets/app.js", "control asset path was not stripped correctly")
-        assert_true(REQUESTS[2][0] == "/", "control websocket path was not stripped to upstream root")
+        assert_true(REQUESTS[2][0] == "/?x=1", "node route query string was not preserved")
+        assert_true(REQUESTS[3][0] == "/assets/app.js", "node asset path was not stripped correctly")
+        assert_true(REQUESTS[4][0] == "/", "control websocket path was not stripped to upstream root")
+        assert_true(REQUESTS[5][0] == "/", "node websocket path was not stripped to upstream root")
         for _path, headers in REQUESTS:
             assert_true("cookie" not in headers, "Glass admin cookie leaked to the Control proxy target")
+            assert_true("authorization" not in headers, "Glass Authorization leaked to the Control proxy target")
     finally:
         proc.terminate()
         try:
