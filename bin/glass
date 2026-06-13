@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.4.4 - Noted by Theo - 2026-06-10.
+"""Theo Agent OS Glass v0.4.5 - Noted by Theo - 2026-06-13.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -58,6 +58,11 @@ ADMIN_LOGIN_FAILURES: dict[str, list[float]] = {}
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def file_mtime_utc(path: Path) -> str:
+    """Fallback timestamp for legacy records that predate explicit envelope times."""
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
 
 
 def glass_mode() -> str:
@@ -400,6 +405,7 @@ def load_runs() -> list[dict[str, object]]:
         job_id = run_dir.name
         errors = validate_result(result_path)
         if errors:
+            entry = entries.get(job_id, {})
             loaded.append({
                 "valid": False,
                 "job_id": job_id,
@@ -409,8 +415,10 @@ def load_runs() -> list[dict[str, object]]:
                 "summary": "Invalid result envelope.",
                 "status": "failed",
                 "state": "review",
-                "worker": entries.get(job_id, {}).get("worker", "unknown"),
-                "lane": entries.get(job_id, {}).get("lane", "unknown"),
+                "worker": entry.get("worker", "unknown"),
+                "lane": entry.get("lane", "unknown"),
+                "created_at": entry.get("created_at") or file_mtime_utc(result_path),
+                "finished_at": entry.get("finished_at") or file_mtime_utc(result_path),
                 "artifacts": [],
                 "memory_proposals": [],
             })
@@ -424,6 +432,14 @@ def load_runs() -> list[dict[str, object]]:
                 job = read_json(job_path)  # type: ignore[assignment]
             except Exception:
                 job = {}
+        created_at = (
+            entry.get("created_at")
+            or job.get("created_at")
+            or job.get("requested_at")
+            or result.get("created_at")
+            or file_mtime_utc(result_path)
+        )
+        finished_at = entry.get("finished_at") or result.get("finished_at") or result.get("completed_at") or ""
         loaded.append({
             "valid": True,
             "job_id": result.get("job_id", job_id),
@@ -436,8 +452,8 @@ def load_runs() -> list[dict[str, object]]:
             "git": result.get("git", {}),
             "worker": entry.get("worker") or job.get("worker") or artifact_worker(result),
             "lane": entry.get("lane") or job.get("lane") or "self",
-            "created_at": entry.get("created_at", ""),
-            "finished_at": entry.get("finished_at", ""),
+            "created_at": created_at,
+            "finished_at": finished_at,
             "artifacts": result.get("artifacts", []),
             "memory_proposals": result.get("memory_proposals", []),
             "transcript": result.get("transcript", ""),
@@ -555,6 +571,8 @@ def artifact_list(runs: list[dict[str, object]]) -> list[dict[str, object]]:
             row = dict(artifact)
             row["job_id"] = item.get("job_id")
             row["run_dir"] = item.get("run_dir")
+            row["run_created_at"] = item.get("created_at")
+            row["run_finished_at"] = item.get("finished_at")
             row["index"] = index
             artifacts.append(row)
     return artifacts
@@ -836,6 +854,15 @@ function esc(v) {
 }
 function cls(status) { return ["success","partial","blocked","failed"].includes(status) ? status : ""; }
 function short(id) { return String(id || "").slice(0, 8); }
+function timeLabel(value) {
+  if (!value) return "";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+}
+function timestampLine(label, value) {
+  return value ? `<div class="subtle" title="${esc(value)}">${esc(label)} ${esc(timeLabel(value))}</div>` : "";
+}
 function tabBar() {
   document.getElementById("tabs").innerHTML = tabs.map(t => `<button class="tab ${t === current ? "active" : ""}" data-tab="${esc(t)}">${esc(t)}</button>`).join("");
   document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => { current = btn.dataset.tab; render(); });
@@ -873,6 +900,8 @@ function runCard(run) {
   return `<article class="card">
     <div class="row"><div class="title mono">${esc(short(run.job_id))}</div><span class="pill ${cls(run.status)}">${esc(run.status)}</span></div>
     <div class="subtle">${esc(run.lane)} / ${esc(run.worker)} / <span class="${esc(run.state)}">${esc(run.state)}</span></div>
+    ${timestampLine("started", run.created_at)}
+    ${timestampLine("finished", run.finished_at)}
     <p>${esc(run.summary)}</p>
     <div class="subtle">tests ${esc(tests.passed ?? 0)}/${esc(tests.failed ?? 0)} · branch ${esc(git.branch || "(none)")}</div>
     <p><button onclick="openRun('${esc(run.job_id)}')">Open Run</button></p>
@@ -883,6 +912,8 @@ async function openRun(jobId) {
   const detail = await res.json();
   document.getElementById("run-detail").innerHTML = `<section class="card detail">
     <div class="row"><div class="title">Run ${esc(detail.job_id)}</div><span class="pill ${cls(detail.status)}">${esc(detail.status)}</span></div>
+    ${timestampLine("started", detail.created_at)}
+    ${timestampLine("finished", detail.finished_at)}
     <p>${esc(detail.summary)}</p>
     <div class="split">
       <div><h3>Receipt</h3><pre>${esc(detail.receipt || "")}</pre></div>
@@ -926,6 +957,7 @@ function artifactCard(a) {
   return `<article class="card">
     <div class="row"><div class="title">${esc(a.title || "Untitled")}</div><span class="pill">${esc(a.artifact_type)}</span></div>
     <div class="subtle">${esc(a.worker)} / ${esc(short(a.source_job))} / ${esc(a.preview_kind)}</div>
+    ${timestampLine("run started", a.run_created_at)}
     <p>${esc(a.summary)}</p>
     <div class="mono subtle">${esc(a.path)}</div>
     ${blockReason ? `<div class="blocked-box">blocked: ${esc(blockReason)}</div>` : `<p><button onclick="previewArtifact('${esc(a.job_id)}', ${Number(a.index)}, this.parentElement.nextElementSibling)">Preview</button></p><div class="artifact-preview"></div>`}
@@ -938,6 +970,7 @@ function renderMouth() {
   const commands = (appState.mouth || []).map(m => `<article class="card">
     <div class="row"><div class="title mono">${esc(short(m.command_id))}</div><span class="pill ${esc(m.state)}">${esc(m.state)}</span></div>
     <div class="subtle">${esc((m.source || {}).channel)} / ${esc((m.source || {}).sender_label)} / ${esc(m.mode)}</div>
+    ${timestampLine("created", m.created_at)}
     <p>${esc(m.summary)}</p>
     <div class="mono subtle">job ${esc(short(m.job_id))}</div>
     ${m.result_path ? `<div class="mono subtle">result ${esc(m.result_path)}</div>` : ""}
@@ -948,7 +981,9 @@ function renderMouth() {
   const replies = (appState.mouth_replies || []).map(r => `<article class="card">
     <div class="row"><div class="title mono">reply ${esc(short(r.command_id))}</div><span class="pill ${r.ok ? "success" : "failed"}">${r.ok ? "ok" : "error"}</span></div>
     <div class="subtle">${esc(r.channel)} / target ${esc(r.target)} / exit ${esc(r.exit_code)}</div>
+    ${timestampLine("created", r.created_at)}
     <div class="subtle">delivery ${(r.delivery || {}).status ? `<span class="pill success">${esc((r.delivery || {}).status)}</span> message ${esc((r.delivery || {}).message_id || "")}` : `<span class="pill blocked">pending</span>`}</div>
+    ${timestampLine("delivered", (r.delivery || {}).created_at)}
     <pre>${esc(r.text || "")}</pre>
     ${r.result_path ? `<div class="mono subtle">result ${esc(r.result_path)}</div>` : ""}
     ${r.delivery_path ? `<div class="mono subtle">delivery ${esc(r.delivery_path)}</div>` : ""}
