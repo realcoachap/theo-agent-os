@@ -206,15 +206,17 @@ Glass is deliberately read-mostly. It can append memory proposal verdicts to
 `memory/queue.jsonl` and update manual security checklist timestamps in
 `security/checklist.json`; it cannot dispatch jobs.
 
-In Railway admin mode, Glass also exposes a strict, admin-gated OpenClaw
-Control node registry. `/control/spartacus/` is the canonical Spartacus route,
-with `/control/` kept as its compatibility alias. Caesar and Theokoles are
-registry entries that stay disabled until Railway can reach them through
-Tailscale or another guarded relay. The proxy stores no gateway token, strips
-Glass cookies and auth headers before forwarding upstream, strips upstream
-cookies before returning responses, and keeps each OpenClaw gateway's own
-token/device-pairing checks as the real authority. Arbitrary upstream dashboard
-URLs stay out of scope.
+In Railway admin mode, Glass also exposes the Spartacus VPS proof-of-concept:
+a strict, admin-gated OpenClaw Control node registry where
+`/control/spartacus/` is the canonical Spartacus route and `/control/` remains
+its compatibility alias. Glass probes the configured Spartacus gateway from the
+web tier and marks it as the reference remote node, proving the path without a
+physical machine. Caesar and Theokoles remain registry entries, but stay
+disabled until Railway can reach them through Tailscale or another guarded
+relay. The proxy stores no gateway token, strips Glass cookies and auth headers
+before forwarding upstream, strips upstream cookies before returning responses,
+and keeps each OpenClaw gateway's own token/device-pairing checks as the real
+authority. Arbitrary upstream dashboard URLs stay out of scope.
 
 Unsafe HTML artifacts show a blocked badge unless the result envelope declares
 `safe_to_render=true`, and artifact preview paths must stay inside their own

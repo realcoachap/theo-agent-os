@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.3 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.4 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -17,6 +17,10 @@ continues to the Control UI instead of dropping Coach on the Glass root.
 v0.5.3 turns the one-off Control proxy into a closed node registry. Spartacus
 stays live, `/control/` remains a compatibility alias, and
 `/control/<node>/` becomes the canonical shape for multi-node Mission Control.
+
+v0.5.4 makes Spartacus the explicit VPS proof-of-concept path. Glass now probes
+configured Control nodes from the web tier and shows Spartacus as the reference
+remote node, so the POC is visible without needing a physical machine.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -80,13 +84,17 @@ CONTROL_PROXY_TARGET_PORT_ENV = "THEO_GLASS_CONTROL_PROXY_PORT"
 CONTROL_PROXY_TARGET_HOST_DEFAULT = "185.111.156.109"
 CONTROL_PROXY_TARGET_PORT_DEFAULT = 18789
 CONTROL_PROXY_LEGACY_ALIAS_SEGMENTS = {"", "assets", "favicon.ico", "manifest.json"}
+CONTROL_NODE_PROBE_TIMEOUT_SECONDS = 0.75
+CONTROL_NODE_PROBE_TTL_SECONDS = 15
+CONTROL_NODE_HEALTH_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 CONTROL_NODE_DEFINITIONS = {
     "spartacus": {
         "label": "Spartacus",
         "role": "Contabo VPS",
         "default_host": CONTROL_PROXY_TARGET_HOST_DEFAULT,
         "default_port": CONTROL_PROXY_TARGET_PORT_DEFAULT,
-        "note": "live Railway baseline",
+        "note": "VPS reference POC: no physical machine required",
+        "proof": "Railway-to-Spartacus gateway + Control UI + WebSocket path",
         "legacy_env": True,
     },
     "caesar": {
@@ -95,6 +103,7 @@ CONTROL_NODE_DEFINITIONS = {
         "default_host": "",
         "default_port": 18789,
         "note": "needs Tailscale or guarded relay from Railway",
+        "proof": "planned after reachability",
         "legacy_env": False,
     },
     "theokoles": {
@@ -103,6 +112,7 @@ CONTROL_NODE_DEFINITIONS = {
         "default_host": "",
         "default_port": 18789,
         "note": "needs Tailscale or guarded relay from Railway",
+        "proof": "planned after reachability",
         "legacy_env": False,
     },
 }
@@ -304,20 +314,60 @@ def control_node_target(node_id: str) -> tuple[str, int]:
     return host, port
 
 
+def control_node_health(node_id: str, host: str, port: int) -> dict[str, object]:
+    """Small cached socket proof that Railway can reach a configured gateway."""
+    if not host:
+        return {"status": "planned", "reachable": False, "checked_at": "", "latency_ms": None}
+    cache_key = f"{node_id}:{host}:{port}"
+    now = time.monotonic()
+    cached = CONTROL_NODE_HEALTH_CACHE.get(cache_key)
+    if cached and now - cached[0] < CONTROL_NODE_PROBE_TTL_SECONDS:
+        return dict(cached[1])
+
+    started = time.monotonic()
+    checked_at = utc_now()
+    try:
+        with socket.create_connection((host, port), timeout=CONTROL_NODE_PROBE_TIMEOUT_SECONDS):
+            pass
+        health: dict[str, object] = {
+            "status": "online",
+            "reachable": True,
+            "checked_at": checked_at,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+        }
+    except OSError as exc:
+        health = {
+            "status": "unreachable",
+            "reachable": False,
+            "checked_at": checked_at,
+            "latency_ms": None,
+            "error": type(exc).__name__,
+        }
+    CONTROL_NODE_HEALTH_CACHE[cache_key] = (now, health)
+    return dict(health)
+
+
 def control_nodes() -> list[dict[str, object]]:
     nodes: list[dict[str, object]] = []
     for node_id, definition in CONTROL_NODE_DEFINITIONS.items():
         host, port = control_node_target(node_id)
         enabled = bool(host)
+        health = control_node_health(node_id, host, port) if enabled else {"status": "planned", "reachable": False, "checked_at": "", "latency_ms": None}
         nodes.append({
             "id": node_id,
             "label": definition["label"],
             "role": definition["role"],
             "route": f"{CONTROL_PROXY_PREFIX}/{node_id}/" if enabled else "",
             "enabled": enabled,
-            "status": "configured" if enabled else "planned",
+            "status": health["status"],
+            "reachable": health["reachable"],
+            "checked_at": health["checked_at"],
+            "latency_ms": health["latency_ms"],
+            "error": health.get("error", ""),
             "target": f"{host}:{port}" if enabled else "",
             "note": definition["note"],
+            "proof": definition["proof"],
+            "reference": node_id == "spartacus",
         })
     return nodes
 
@@ -1296,20 +1346,29 @@ function renderMouth() {
     <div><h2 style="font-size:16px;margin:0 0 8px">Replies</h2><div class="grid">${replies || empty("No Mouth replies yet.")}</div></div>
   </section>`;
 }
+function nodeStatusClass(n) {
+  if (n.status === "online") return "success";
+  if (n.status === "planned") return "blocked";
+  return "failed";
+}
 function renderControl() {
   const nodes = appState.control_nodes || [];
   return `<section class="stack">
     <div class="grid">${nodes.map(n => `<article class="card">
-      <div class="row"><div class="title">${esc(n.label)}</div><span class="pill ${n.enabled ? "success" : "blocked"}">${esc(n.status)}</span></div>
+      <div class="row"><div class="title">${esc(n.label)}</div><span class="pill ${nodeStatusClass(n)}">${esc(n.status)}</span></div>
       <div class="subtle">${esc(n.role)}</div>
+      ${n.reference ? `<div class="pill success">VPS proof target</div>` : ""}
       <p>${esc(n.note)}</p>
+      <div class="subtle">${esc(n.proof || "")}</div>
       ${n.target ? `<div class="mono subtle">${esc(n.target)}</div>` : ""}
+      ${n.checked_at ? `<div class="subtle">checked ${esc(timeLabel(n.checked_at))}${n.latency_ms !== null ? ` · ${esc(n.latency_ms)}ms` : ""}</div>` : ""}
+      ${n.error ? `<div class="blocked-box">probe failed: ${esc(n.error)}</div>` : ""}
       ${n.enabled ? `<p><a class="button" target="_blank" rel="noreferrer" href="${esc(n.route)}">Open ${esc(n.label)} Control</a></p>` : `<div class="blocked-box">Network path not configured yet.</div>`}
     </article>`).join("") || empty("No Control nodes configured.")}</div>
     <article class="card detail">
-      <div class="title">Registry Rules</div>
-      <p class="muted">Control routes are closed and allowlisted. Glass never accepts gateway hosts, tokens, or node targets from the browser.</p>
-      <div class="mono subtle">canonical /control/&lt;node&gt;/ · compatibility /control/ -> Spartacus</div>
+      <div class="title">Spartacus POC Contract</div>
+      <p class="muted">Spartacus is the reference remote node: a VPS-backed OpenClaw gateway reachable from Glass through Railway. Control still requires Glass admin login plus the Spartacus gateway token and device pairing.</p>
+      <div class="mono subtle">canonical /control/spartacus/ · compatibility /control/ -> Spartacus · no arbitrary gateway URLs</div>
     </article>
   </section>`;
 }
