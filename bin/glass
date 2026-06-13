@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.1 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.2 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -10,6 +10,9 @@ v0.5.1 adds an admin-gated `/control/` Railway proxy to the Spartacus
 OpenClaw gateway Control UI, including WebSocket upgrade tunneling. This avoids
 new Railway resource provisioning while keeping Spartacus token/device auth as
 the real authority.
+
+v0.5.2 preserves deep links after successful admin login, so `/control/#token=...`
+continues to the Control UI instead of dropping Coach on the Glass root.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -327,12 +330,13 @@ button {{ width:100%; margin-top:16px; min-height:38px; border:1px solid #4a505b
 <script>
 document.getElementById("login").addEventListener("submit", async (event) => {{
   event.preventDefault();
+  const next = window.location.pathname === "/login" ? "/" : window.location.href;
   const res = await fetch("/api/login", {{
     method: "POST",
     headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{user: document.getElementById("user").value, password: document.getElementById("password").value}})
   }});
-  if (res.ok) window.location = "/";
+  if (res.ok) window.location = next;
   else window.location = "/login?error=1";
 }});
 </script>
@@ -1301,7 +1305,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.5.1"
+    server_version = "TheoAgentOSGlass/0.5.2"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

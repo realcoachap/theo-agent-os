@@ -78,6 +78,8 @@ Noted by Theo - 2026-06-09
 
 ### Fixed
 
+- Glass admin login now preserves deep links such as `/control/#token=...` after
+  successful authentication, instead of always redirecting to `/`.
 - `bin/mouth-openclaw` no longer auto-trusts `channel=test` events; fixtures
   must opt in with `--allow-test-trust` or `THEO_ALLOW_TEST_TRUST=1`.
 - `bin/glass --remote-admin` now throttles repeated bad login attempts per

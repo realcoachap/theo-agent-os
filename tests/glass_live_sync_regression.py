@@ -86,6 +86,16 @@ def assert_no_clobber_loop() -> None:
     print("ok: clobber loop stays gone; live-sync scaffolding present")
 
 
+def assert_login_preserves_deep_links() -> None:
+    """Control UI links carry token fragments, so login must not drop the URL."""
+    src = GLASS.read_text(encoding="utf-8")
+    assert_true('const next = window.location.pathname === "/login" ? "/" : window.location.href;' in src,
+                "admin login no longer preserves deep links")
+    assert_true("if (res.ok) window.location = next;" in src,
+                "admin login success path does not use the preserved target")
+    print("ok: admin login preserves deep links")
+
+
 def wait_for_glass(base_url: str, proc: subprocess.Popen[str]) -> None:
     deadline = time.time() + 8
     while time.time() < deadline:
@@ -131,6 +141,7 @@ def assert_shell_and_state() -> None:
 def main() -> int:
     assert_app_js_parses()
     assert_no_clobber_loop()
+    assert_login_preserves_deep_links()
     assert_shell_and_state()
     print("glass live-sync regressions passed")
     return 0
