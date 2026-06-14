@@ -187,3 +187,9 @@ Noted by Theo - 2026-06-09
 - [x] Add a separate queued-send receipt plus a local reply sender bridge so
   approved reply drafts do not auto-send until Glass writes
   `send-approved.json`.
+- [x] Deploy and live-verify the queued reply sender bridge. (2026-06-14:
+  deployment `07de5fa8-22f1-4e81-bf07-8958233adf5f` SUCCESS; live
+  `scripts/run-mouth-reply-bridge.sh --dry-run --json` returned
+  `pending=0`, `sent=0`; `/login` returned 200 and logged-out `/api/state`
+  stayed 401; user timer `theo-mouth-reply-bridge.timer` active every
+  30 seconds and two journal ticks showed `pending=0`, `sent=0`, `marked=0`.)
