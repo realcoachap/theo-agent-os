@@ -169,5 +169,10 @@ Noted by Theo - 2026-06-09
   pending `jobs/outbox/.../reply.json`; unauth reply draft stayed 401.)
 - [x] Add guarded runtime send handoff endpoints for reply payload emission and
   post-delivery `sent.json` markers.
-- [ ] Deploy and live-verify the runtime send handoff with one harmless
+- [x] Deploy and live-verify the runtime send handoff with one harmless
   Telegram message.
+  (2026-06-14: deployment `f5f2425e-e5d8-4e26-9bce-c810861b573a` SUCCESS;
+  live command `cf2d772c-d5d7-4aac-a323-f87e491a020a` emitted a guarded
+  payload, OpenClaw delivered Telegram message `10408`, and
+  `/api/mouth/reply-sent` wrote a `sent.json` marker; unauth mark-sent stayed
+  401.)
