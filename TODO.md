@@ -244,4 +244,24 @@ Noted by Theo - 2026-06-09
   storage, and no provider writes.
 - [x] Surface the connector map through `/api/state` as `connectors` and add a
   read-only Glass Connectors tab.
-- [ ] Run local regressions, commit, deploy, and live-verify the connector map.
+- [x] Run local regressions, commit, deploy, and live-verify the connector map.
+  (2026-06-14: commit `f7768dc`, Railway deployment
+  `a4b198d5-9d78-464c-a6c1-561ecb2fd254` SUCCESS; local py_compile,
+  Glass live-sync, Control proxy, Shot 4 hardening, Mouth reply/session bridge,
+  diff check, and desktop/mobile Connectors visual smoke passed. Live checks
+  passed: `/login` 200, logged-out `/api/state` 401, guarded deploy receipt
+  Mattermost delivery `sent`, `connectors` exposed 6 candidates through the
+  guarded state path, local reply bridge dry-run `pending=0` / `sent=0`, and
+  both Mouth timers active.)
+
+## 2026-06-14 Task: Mission Control Composer Envelopes
+
+- [x] Add an inert composer-envelope write path at `/api/composer/envelope`.
+- [x] Make the Mission Control Stage button write draft envelopes instead of
+  staying as a pure stub.
+- [x] Expose staged envelopes through `/api/state` as `composer_envelopes`.
+- [x] Render composer envelopes in the Mission timeline and right rail.
+- [x] Keep dispatch, connector calls, Telegram sends, and shell execution out
+  of the composer path.
+- [ ] Run local regressions, commit, deploy, and live-verify the composer
+  envelope slice.

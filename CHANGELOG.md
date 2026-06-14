@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.9 Mission Control composer envelopes: `POST
+  /api/composer/envelope` and the Stage button now write inert draft operator
+  envelopes to `runs/composer-envelopes.jsonl`, surface them through
+  `/api/state` as `composer_envelopes`, and render them in the timeline/right
+  rail without dispatching jobs, sending messages, calling providers, or
+  executing shell commands.
 - Glass v0.6.8 connector map: `registry/connectors.json` captures the
   Nango-backed connector strategy as policy/readiness data only, with GitHub,
   Google Calendar, Gmail, Drive/Docs, Notion, and Linear staged by phase, risk,

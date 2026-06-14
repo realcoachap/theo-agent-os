@@ -239,6 +239,13 @@ provider write actions. The current plan is Nango-backed auth/credential
 handling with GitHub and Google-family connectors evaluated read-only first,
 drafts second, and writes last behind typed action envelopes and receipts.
 
+The Mission Control composer writes draft operator envelopes to
+`runs/composer-envelopes.jsonl` through `POST /api/composer/envelope`; it does
+not dispatch jobs, call connectors, send messages, or execute shell commands.
+Envelope rows are exposed through `/api/state` as `composer_envelopes` and are
+visible in the Mission timeline/right rail until a later typed handler promotes
+one into a reviewed job, Mouth reply, connector action, or team-room note.
+
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where
 `/control/spartacus/` is the canonical Spartacus route and `/control/` remains

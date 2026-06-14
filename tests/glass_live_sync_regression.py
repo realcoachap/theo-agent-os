@@ -164,12 +164,14 @@ def assert_shell_and_state() -> None:
     receipt_path = REPO_ROOT / "runs" / ".test-control-receipts.jsonl"
     mouth_verdicts_path = REPO_ROOT / "runs" / ".test-mouth-verdicts.jsonl"
     team_receipts_path = REPO_ROOT / "runs" / ".test-team-room-receipts.jsonl"
+    composer_envelopes_path = REPO_ROOT / "runs" / ".test-composer-envelopes.jsonl"
     mouth_index = REPO_ROOT / "runs" / "mouth-index.jsonl"
     original_mouth_index = mouth_index.read_text(encoding="utf-8") if mouth_index.exists() else None
     ingested_command_id = ""
     receipt_path.unlink(missing_ok=True)
     mouth_verdicts_path.unlink(missing_ok=True)
     team_receipts_path.unlink(missing_ok=True)
+    composer_envelopes_path.unlink(missing_ok=True)
     TeamWebhookHandler.posts = []
     webhook_server = HTTPServer(("127.0.0.1", 0), TeamWebhookHandler)
     webhook_thread = threading.Thread(target=webhook_server.serve_forever, daemon=True)
@@ -182,6 +184,7 @@ def assert_shell_and_state() -> None:
             "THEO_GLASS_CONTROL_RECEIPTS_PATH": str(receipt_path),
             "THEO_GLASS_MOUTH_VERDICTS_PATH": str(mouth_verdicts_path),
             "THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH": str(team_receipts_path),
+            "THEO_GLASS_COMPOSER_ENVELOPES_PATH": str(composer_envelopes_path),
             "THEO_GLASS_TEAM_ROOM_WEBHOOK_URL": f"http://127.0.0.1:{webhook_server.server_port}/hooks/glass-test",
             "THEO_GLASS_TEAM_ROOM_RECEIPT_SECRET": "team-receipt-secret",
             "THEO_GLASS_MOUTH_INGEST_SECRET": "shot4-ingest-secret",
@@ -206,7 +209,7 @@ def assert_shell_and_state() -> None:
             'Mission Control',
             'mission-control',
             'Mission Details',
-            'Mouth gates write receipts only',
+            'Stage writes a draft envelope only',
             'Open Agent Room',
             'Open Team Room',
             'Team Rooms',
@@ -217,6 +220,9 @@ def assert_shell_and_state() -> None:
             'team_room_receipts',
             'function renderConnectors',
             'Mattermost delivery',
+            'composer-input',
+            'Composer envelope',
+            '/api/composer/envelope',
             'Mouth pipeline',
             'function renderMouthFlow',
             'function mouthNextAction',
@@ -248,10 +254,23 @@ def assert_shell_and_state() -> None:
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts", "connectors"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts", "connectors", "composer_envelopes"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
         connectors = (snapshot.get("connectors") or {}).get("connectors")
         assert_true(isinstance(connectors, list) and any(item.get("id") == "github" for item in connectors if isinstance(item, dict)), "/api/state missing GitHub connector candidate")
+        status, staged = request_json(
+            base_url + "/api/composer/envelope",
+            {"text": "/status check Glass health"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"composer envelope returned {status}: {staged}")
+        envelope = staged.get("envelope")
+        assert_true(isinstance(envelope, dict) and envelope.get("kind") == "composer_envelope", "composer envelope has wrong shape")
+        assert_true(envelope.get("intent") == "status_check" and envelope.get("dispatch") == "none", "composer envelope should be an inert status draft")
+        staged_state = staged.get("state")
+        assert_true(isinstance(staged_state, dict), "composer envelope did not return refreshed state")
+        staged_envelopes = staged_state.get("composer_envelopes")
+        assert_true(isinstance(staged_envelopes, list) and staged_envelopes[0].get("id") == envelope.get("id"), "composer envelope missing from refreshed state")
         team_room_ids = {room.get("id") for room in snapshot["team_rooms"]}
         assert_true({"mission-control", "agent-chatter", "theo-receipts"}.issubset(team_room_ids), "/api/state missing team room links")
         mission_room = next(room for room in snapshot["team_rooms"] if room.get("id") == "mission-control")
@@ -457,6 +476,7 @@ def assert_shell_and_state() -> None:
         receipt_path.unlink(missing_ok=True)
         mouth_verdicts_path.unlink(missing_ok=True)
         team_receipts_path.unlink(missing_ok=True)
+        composer_envelopes_path.unlink(missing_ok=True)
         if ingested_command_id:
             shutil.rmtree(REPO_ROOT / "jobs" / "inbox" / ingested_command_id, ignore_errors=True)
             shutil.rmtree(REPO_ROOT / "jobs" / "outbox" / ingested_command_id, ignore_errors=True)

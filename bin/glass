@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.8 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.9 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -79,6 +79,10 @@ compact no-secret summary through an allowlisted Mattermost incoming webhook.
 v0.6.8 adds the first connector map surface. It is a policy/readiness map only:
 no OAuth install, no provider token storage, and no connector write actions.
 
+v0.6.9 lets the Mission Control composer write draft operator envelopes. These
+records are review inputs only; they do not dispatch jobs, call providers, or
+execute shell commands.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -125,6 +129,7 @@ RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
 REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
 CONTROL_RECEIPTS = Path(os.environ.get("THEO_GLASS_CONTROL_RECEIPTS_PATH", str(RUNS / "control-receipts.jsonl"))).expanduser()
 TEAM_ROOM_RECEIPTS = Path(os.environ.get("THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH", str(RUNS / "team-room-receipts.jsonl"))).expanduser()
+COMPOSER_ENVELOPES = Path(os.environ.get("THEO_GLASS_COMPOSER_ENVELOPES_PATH", str(RUNS / "composer-envelopes.jsonl"))).expanduser()
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
 REMOTE_REVIEW = False
@@ -596,6 +601,76 @@ def publish_team_room_receipt(
     receipt["mattermost"] = deliver_team_room_receipt(receipt)
     append_team_room_receipt(receipt)
     return receipt
+
+
+def composer_intent(text: str) -> dict[str, str]:
+    """Small deterministic classifier for draft envelopes, not model intent."""
+    lowered = text.strip().lower()
+    if lowered.startswith("/status"):
+        return {"intent": "status_check", "target": "glass_status", "route": "read_only"}
+    if lowered.startswith("/receipt"):
+        return {"intent": "receipt_lookup", "target": "runs", "route": "read_only"}
+    if lowered.startswith("/control") or "@spartacus" in lowered:
+        return {"intent": "control_status", "target": "spartacus", "route": "read_only"}
+    if lowered.startswith("/mouth") or "reply" in lowered:
+        return {"intent": "mouth_review", "target": "mouth", "route": "draft_only"}
+    if lowered.startswith("/connector") or "nango" in lowered:
+        return {"intent": "connector_review", "target": "connectors", "route": "read_only"}
+    if "@team" in lowered or "mattermost" in lowered:
+        return {"intent": "team_room_note", "target": "team_room", "route": "draft_only"}
+    return {"intent": "operator_request", "target": "mission_control", "route": "draft_only"}
+
+
+def append_composer_envelope(entry: dict[str, object]) -> None:
+    COMPOSER_ENVELOPES.parent.mkdir(parents=True, exist_ok=True)
+    with COMPOSER_ENVELOPES.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def composer_envelopes(limit: int = 20) -> list[dict[str, object]]:
+    if not COMPOSER_ENVELOPES.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line in COMPOSER_ENVELOPES.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+    return list(reversed(rows[-limit:]))
+
+
+def write_composer_envelope(text: str, actor: str) -> tuple[dict[str, object] | None, str]:
+    message = text.strip()
+    if not message:
+        return None, "composer text is required"
+    if len(message) > 1200:
+        return None, "composer text is too long"
+    created_at = utc_now()
+    intent = composer_intent(message)
+    envelope = {
+        "id": f"composer-{int(time.time())}-{secrets.token_hex(3)}",
+        "kind": "composer_envelope",
+        "version": "0.6.9",
+        "noted_by": "Theo",
+        "created_at": created_at,
+        "ts": created_at,
+        "actor": actor,
+        "source": "glass_mission_control_composer",
+        "text": message,
+        "intent": intent["intent"],
+        "target": intent["target"],
+        "route": intent["route"],
+        "state": "draft",
+        "dispatch": "none",
+        "next_gate": "operator_review",
+        "authority": "Composer envelopes are inert draft records; dispatch still requires a typed job/Mouth path and receipts.",
+    }
+    append_composer_envelope(envelope)
+    return envelope, ""
 
 
 def control_node_target(node_id: str) -> tuple[str, int]:
@@ -1838,6 +1913,7 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "control_ui_url": control_default_url(),
         "team_rooms": team_rooms(),
         "team_room_receipts": team_room_receipts(),
+        "composer_envelopes": composer_envelopes(),
     }
 
 
@@ -2391,9 +2467,10 @@ function stateSignature(s) {
   const teamRooms = (s.team_rooms || []).map(r => `${r.id}:${r.url || ""}:${r.deep_linked ? 1 : 0}`);
   const teamReceipts = (s.team_room_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}:${((r.mattermost || {}).status) || ""}`);
   const connectors = ((((s.connectors || {}).connectors) || [])).map(c => `${c.id}:${c.phase || ""}:${c.status || ""}:${c.risk || ""}`);
+  const composer = (s.composer_envelopes || []).map(e => `${e.id}:${e.intent || ""}:${e.state || ""}:${e.created_at || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, replies, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    control, controlReceipts, teamRooms, teamReceipts, connectors, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, controlReceipts, teamRooms, teamReceipts, connectors, composer, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -2994,6 +3071,17 @@ function missionItems() {
       ].filter(Boolean)
     });
   }
+  for (const envelope of (appState.composer_envelopes || []).slice(0, 5)) {
+    items.push({
+      type: "composer",
+      ts: envelope.created_at || envelope.ts,
+      actor: envelope.actor || "Glass",
+      title: `Composer ${envelope.intent || "draft"}`,
+      body: `Draft envelope ${short(envelope.id)} targets ${envelope.target || "mission_control"}; dispatch is ${envelope.dispatch || "none"}.`,
+      status: "review",
+      meta: [envelope.route || "draft_only", envelope.next_gate || "operator_review"].filter(Boolean)
+    });
+  }
   for (const run of (appState.runs || []).slice(0, 8)) {
     const tests = run.tests || {};
     items.push({
@@ -3066,10 +3154,36 @@ function timelineItem(item) {
     </article>
   </div>`;
 }
-function composerBoundary(event) {
+async function composerBoundary(event) {
   event.preventDefault();
+  const input = document.getElementById("composer-input");
   const status = document.getElementById("composer-status");
-  if (status) status.textContent = "Composer is staged only: dispatch still goes through bin/mouth + bin/dispatch with confirm and receipts.";
+  const text = input ? input.value.trim() : "";
+  if (!text) {
+    if (status) status.textContent = "Type a request first; Stage writes a draft envelope only.";
+    return;
+  }
+  if (status) status.textContent = "Writing draft composer envelope...";
+  try {
+    const res = await fetch("/api/composer/envelope", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({text})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (input) input.value = "";
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status");
+    if (freshStatus) freshStatus.textContent = `Draft envelope ${short((data.envelope || {}).id)} staged for ${(data.envelope || {}).intent || "review"}.`;
+  } catch (err) {
+    if (status) status.textContent = `Composer envelope blocked: ${err.message || err}`;
+  } finally {
+    updateSyncIndicator();
+  }
 }
 async function refreshSpartacusAction(button) {
   const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
@@ -3297,13 +3411,13 @@ function renderMission() {
     <form class="composer" onsubmit="composerBoundary(event)">
       <div class="composer-row">
       <button type="button" onclick="manualRefresh()">+</button>
-        <input aria-label="Mission command composer" placeholder="Type /status, /receipt, /control, or mention an agent..." autocomplete="off">
+        <input id="composer-input" aria-label="Mission command composer" placeholder="Type /status, /receipt, /control, or mention an agent..." autocomplete="off">
         <button type="button" onclick="refreshSpartacusAction(this)">@Spartacus</button>
         <button type="button" onclick="selectTab('Workers')">@Team</button>
         ${teamRoomLink("agent-chatter", "Room")}
         <button type="submit">Stage</button>
       </div>
-      <div class="composer-status" id="composer-status">Mouth gates write receipts only; no command is dispatched from Glass.</div>
+      <div class="composer-status" id="composer-status">Stage writes a draft envelope only; no command is dispatched from Glass.</div>
     </form>
   </section>`;
 }
@@ -3314,11 +3428,15 @@ function renderMissionRail() {
   const tests = (run || {}).tests || {};
   const artifacts = (appState.artifacts || []).slice(0, 4);
   const controlReceipt = latestControlReceipt();
+  const composerEnvelope = (appState.composer_envelopes || [])[0] || null;
   const gateLabel = appState.writes_enabled ? "admin session" : "read-only gate";
   const receiptPreview = run ? `${run.summary || "Run receipt"}\nrun_id: ${run.job_id}\nstatus: ${run.status}\nstate: ${run.state}\nresult: ${run.result_path || ""}` : "No focused run yet.";
   const controlReceiptPreview = controlReceipt
     ? `${controlReceipt.title || "Spartacus receipt"}\nreceipt_id: ${controlReceipt.id}\nstatus: ${controlReceipt.status}\nstate: ${controlReceipt.state}\nprobe: ${controlReceipt.probe || "n/a"}\nlatency: ${Number.isFinite(Number(controlReceipt.latency_ms)) ? `${controlReceipt.latency_ms}ms` : "n/a"}\n${controlReceipt.summary || ""}`
     : "No Spartacus action receipt yet.";
+  const composerPreview = composerEnvelope
+    ? `envelope_id: ${composerEnvelope.id}\nintent: ${composerEnvelope.intent}\ntarget: ${composerEnvelope.target}\nroute: ${composerEnvelope.route}\nstate: ${composerEnvelope.state}\nnext_gate: ${composerEnvelope.next_gate}\n${composerEnvelope.text || ""}`
+    : "No composer envelope staged yet.";
   return `<div class="rail-header">
     <div>
       <div class="rail-title">Mission Details</div>
@@ -3348,6 +3466,10 @@ function renderMissionRail() {
   <section class="rail-section">
     <div class="row"><div class="title">Spartacus action receipt</div>${controlReceipt ? `<span class="pill ${cls(controlReceipt.status)}">${esc(controlReceipt.status)}</span>` : ""}</div>
     <pre>${esc(controlReceiptPreview)}</pre>
+  </section>
+  <section class="rail-section">
+    <div class="row"><div class="title">Composer envelope</div>${composerEnvelope ? `<span class="pill">draft</span>` : ""}</div>
+    <pre>${esc(composerPreview)}</pre>
   </section>
   <section class="rail-section">
     <div class="title">Next action</div>
@@ -4063,6 +4185,22 @@ class Handler(BaseHTTPRequestHandler):
             return
         data = self.post_json()
         if data is None:
+            return
+        if parsed.path == "/api/composer/envelope":
+            text = data.get("text")
+            if not isinstance(text, str):
+                self.send_json({"ok": False, "error": "invalid composer envelope payload"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local-operator"
+            envelope, error = write_composer_envelope(text, actor)
+            if envelope is None:
+                self.send_json({"ok": False, "error": error or "composer envelope failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "envelope": envelope,
+                "state": state(self.admin_authenticated()),
+            })
             return
         if parsed.path == "/api/mouth/verdict":
             command_id = data.get("command_id")
