@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.2 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.3 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -57,6 +57,10 @@ but still does not dispatch work or send Telegram replies by itself.
 v0.6.2 lets Glass draft an outbound reply for an already-approved Mouth command.
 The draft is schema-valid `jobs/outbox/<command_id>/reply.json` only; actual
 Telegram delivery still goes through `bin/mouth-send-reply` and OpenClaw.
+
+v0.6.3 adds the runtime send handoff: Glass can emit the guarded OpenClaw
+message payload for a pending reply and can mark it sent only after the runtime
+returns a message id. It still does not call Telegram itself.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -882,6 +886,75 @@ def write_mouth_reply_draft(command_id: str, text: str, actor: str) -> tuple[dic
     reply["record_path"] = rel(reply_path)
     reply["drafted_by"] = actor
     return reply, ""
+
+
+def find_mouth_reply(command_id: str) -> tuple[Path | None, dict[str, object] | None]:
+    """Find a reply by declared id without treating user input as a path."""
+    if not command_id or not MOUTH_OUTBOX.exists():
+        return None, None
+    for path in MOUTH_OUTBOX.glob("*/reply.json"):
+        try:
+            data = read_json(path)
+        except Exception:
+            continue
+        if isinstance(data, dict) and str(data.get("command_id") or "") == command_id:
+            return path, data
+    return None, None
+
+
+def mouth_send_reply_payload(command_id: str) -> tuple[dict[str, object] | None, str]:
+    """Return the OpenClaw message payload after the sender guard validates it."""
+    reply_path, _ = find_mouth_reply(command_id)
+    if reply_path is None:
+        return None, "Mouth reply draft not found"
+    sent_path = reply_path.parent / "sent.json"
+    if sent_path.exists():
+        return None, "Mouth reply is already marked sent"
+    proc = run([sys.executable, str(REPO_ROOT / "bin" / "mouth-send-reply"), str(reply_path), "--emit-message-json"], cwd=REPO_ROOT)
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout or "sender guard rejected reply").strip()
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return None, f"sender guard returned invalid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return None, "sender guard returned a non-object payload"
+    payload["reply_path"] = rel(reply_path)
+    return payload, ""
+
+
+def mark_mouth_reply_sent(command_id: str, message_id: str) -> tuple[dict[str, object] | None, str]:
+    """Record delivery only after OpenClaw gives the runtime a message id."""
+    clean_message_id = message_id.strip()
+    if not clean_message_id:
+        return None, "message_id is required"
+    reply_path, _ = find_mouth_reply(command_id)
+    if reply_path is None:
+        return None, "Mouth reply draft not found"
+    proc = run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "bin" / "mouth-send-reply"),
+            str(reply_path),
+            "--mark-sent",
+            clean_message_id,
+            "--sent-path",
+        ],
+        cwd=REPO_ROOT,
+    )
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout or "sender guard rejected delivery marker").strip()
+    sent_path = reply_path.parent / "sent.json"
+    if not sent_path.exists():
+        return None, "sender guard did not write sent marker"
+    try:
+        sent = read_json(sent_path)
+    except Exception as exc:
+        return None, f"sent marker unreadable: {exc}"
+    if not isinstance(sent, dict):
+        return None, "sent marker invalid"
+    sent["record_path"] = rel(sent_path)
+    return sent, ""
 
 
 def local_host_header(value: str | None) -> bool:
@@ -2242,6 +2315,10 @@ function renderMouth() {
     <div class="subtle">delivery ${(r.delivery || {}).status ? `<span class="pill success">${esc((r.delivery || {}).status)}</span> message ${esc((r.delivery || {}).message_id || "")}` : `<span class="pill blocked">pending</span>`}</div>
     ${timestampLine("delivered", (r.delivery || {}).created_at)}
     <pre>${esc(r.text || "")}</pre>
+    ${appState.writes_enabled && !(r.delivery || {}).status ? `<div class="timeline-meta">
+      <button onclick="mouthReplyPayload('${esc(r.command_id)}', this)">Emit Payload</button>
+      <button onclick="mouthReplySent('${esc(r.command_id)}', this)">Mark Sent</button>
+    </div>` : ""}
     ${r.result_path ? `<div class="mono subtle">result ${esc(r.result_path)}</div>` : ""}
     ${r.delivery_path ? `<div class="mono subtle">delivery ${esc(r.delivery_path)}</div>` : ""}
     <div class="subtle">${esc(r.record_path || "")}</div>
@@ -2471,6 +2548,68 @@ async function mouthReplyDraft(commandId, button) {
     if (button) {
       button.disabled = false;
       button.textContent = original || "Draft Reply";
+    }
+    updateSyncIndicator();
+  }
+}
+async function mouthReplyPayload(commandId, button) {
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Emitting...";
+  }
+  if (status) status.textContent = `Validating reply payload for ${short(commandId)}...`;
+  try {
+    const res = await fetch("/api/mouth/reply-payload", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({command_id: commandId})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    window.alert(JSON.stringify(data.payload || {}, null, 2));
+    if (status) status.textContent = `Payload emitted for ${short(commandId)}; runtime must send it.`;
+  } catch (err) {
+    if (status) status.textContent = `Payload blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Emit Payload";
+    }
+    updateSyncIndicator();
+  }
+}
+async function mouthReplySent(commandId, button) {
+  const messageId = window.prompt("Delivered message id from OpenClaw:");
+  if (!messageId || !messageId.trim()) return;
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Marking...";
+  }
+  if (status) status.textContent = `Recording delivery for ${short(commandId)}...`;
+  try {
+    const res = await fetch("/api/mouth/reply-sent", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({command_id: commandId, message_id: messageId})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status") || document.getElementById("control-action-status");
+    if (freshStatus) freshStatus.textContent = `Delivery marker recorded for ${short(commandId)}.`;
+  } catch (err) {
+    if (status) status.textContent = `Delivery marker blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Mark Sent";
     }
     updateSyncIndicator();
   }
@@ -3128,6 +3267,33 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 "ok": True,
                 "reply": reply,
+                "state": state(self.admin_authenticated()),
+            })
+            return
+        if parsed.path == "/api/mouth/reply-payload":
+            command_id = data.get("command_id")
+            if not isinstance(command_id, str):
+                self.send_json({"ok": False, "error": "invalid Mouth reply payload request"}, 400)
+                return
+            payload, error = mouth_send_reply_payload(command_id)
+            if payload is None:
+                self.send_json({"ok": False, "error": error or "Mouth reply payload failed"}, 400)
+                return
+            self.send_json({"ok": True, "payload": payload})
+            return
+        if parsed.path == "/api/mouth/reply-sent":
+            command_id = data.get("command_id")
+            message_id = data.get("message_id")
+            if not isinstance(command_id, str) or not isinstance(message_id, str):
+                self.send_json({"ok": False, "error": "invalid Mouth sent marker payload"}, 400)
+                return
+            sent, error = mark_mouth_reply_sent(command_id, message_id)
+            if sent is None:
+                self.send_json({"ok": False, "error": error or "Mouth sent marker failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "sent": sent,
                 "state": state(self.admin_authenticated()),
             })
             return

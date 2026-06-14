@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.3 runtime send handoff: `POST /api/mouth/reply-payload` returns
+  the guarded OpenClaw `message(action="send")` payload for a pending reply, and
+  `POST /api/mouth/reply-sent` writes `jobs/outbox/<command_id>/sent.json` only
+  after the runtime supplies a delivered message id. Glass still does not call
+  Telegram directly.
 - Glass v0.6.2 approved reply drafts: `POST /api/mouth/reply-draft` writes a
   schema-valid `jobs/outbox/<command_id>/reply.json` only after the Mouth
   command has an approved lifecycle verdict. Delivery still requires

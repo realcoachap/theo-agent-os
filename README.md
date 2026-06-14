@@ -381,6 +381,28 @@ That writes `jobs/outbox/<command_id>/reply.json` and validates it against
 `schemas/reply.schema.json`. It still does not deliver the message; delivery
 must go through `bin/mouth-send-reply` and the OpenClaw runtime sender.
 
+Runtime delivery handoff stays two-step:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/reply-payload" \
+  -H "Content-Type: application/json" \
+  -H "X-Theo-Glass: 1" \
+  --data '{"command_id":"<mouth command id>"}'
+```
+
+The runtime sends the returned `message` payload. After OpenClaw returns a
+message id:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/reply-sent" \
+  -H "Content-Type: application/json" \
+  -H "X-Theo-Glass: 1" \
+  --data '{"command_id":"<mouth command id>","message_id":"<delivered id>"}'
+```
+
+That writes `jobs/outbox/<command_id>/sent.json`; Glass then shows the reply as
+sent.
+
 ## Railway Admin Door
 
 The deployed Railway URL defaults to public read-only review mode. A

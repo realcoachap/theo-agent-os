@@ -167,3 +167,7 @@ Noted by Theo - 2026-06-09
   deployment `f664c722-f970-4c7c-8f93-bc5cb1adda68` SUCCESS; live smoke draft
   `3baa9262-c5d5-4260-ab2f-6117df72ebe9` was ingested, approved, and given a
   pending `jobs/outbox/.../reply.json`; unauth reply draft stayed 401.)
+- [x] Add guarded runtime send handoff endpoints for reply payload emission and
+  post-delivery `sent.json` markers.
+- [ ] Deploy and live-verify the runtime send handoff with one harmless
+  Telegram message.

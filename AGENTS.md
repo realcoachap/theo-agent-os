@@ -132,6 +132,8 @@ Irreversible actions require approval before execution.
   - Mouth lifecycle verdict receipts under `jobs/inbox/<command_id>/glass-verdict.json`
     plus append-only audit rows in `runs/mouth-verdicts.jsonl`
   - approved Mouth reply drafts under `jobs/outbox/<command_id>/reply.json`
+  - Mouth delivery markers under `jobs/outbox/<command_id>/sent.json` after
+    OpenClaw reports a delivered message id
 - Artifact previews must be declared by valid result envelopes and remain
   inside their run directory. Absolute paths and escaping paths are blocked.
 - HTML artifact previews require `safe_to_render=true` and still render in a

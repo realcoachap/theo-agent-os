@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.2.0 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass live-sync regression v0.2.1 - Noted by Theo - 2026-06-14.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -13,6 +13,8 @@ Proves the v0.5.0 admin-door live-state sync stays honest:
 - the Glass Mouth lifecycle gate writes approve/hold/reject receipts without dispatch,
 - approved Mouth commands can receive a schema-valid, sender-guard-compatible
   outbound reply draft,
+- the guarded reply payload / sent-marker handoff records delivery without
+  Glass sending Telegram directly,
 - and the old unconditional `setInterval(loadState, 3000)` clobber loop does not
   creep back in (it was the bug that wiped open run details every 3s).
 
@@ -181,8 +183,12 @@ def assert_shell_and_state() -> None:
             'function refreshSpartacusAction',
             'function mouthVerdict',
             'function mouthReplyDraft',
+            'function mouthReplyPayload',
+            'function mouthReplySent',
             '/api/mouth/verdict',
             '/api/mouth/reply-draft',
+            '/api/mouth/reply-payload',
+            '/api/mouth/reply-sent',
             'const mobilePrimaryTabs',
             'function renderMobileNav',
             'function selectTab',
@@ -285,6 +291,29 @@ def assert_shell_and_state() -> None:
         assert_true(sender_guard.returncode == 0, f"sender guard rejected reply draft: {sender_guard.stderr or sender_guard.stdout}")
         payload = json.loads(sender_guard.stdout)
         assert_true(payload.get("action") == "send" and payload.get("target") == "telegram:7148548566", "sender guard emitted the wrong message payload")
+        status, emitted = request_json(
+            base_url + "/api/mouth/reply-payload",
+            {"command_id": ingested_command_id},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"Mouth reply payload returned {status}: {emitted}")
+        emitted_payload = emitted.get("payload")
+        assert_true(isinstance(emitted_payload, dict), "Mouth reply payload did not return payload")
+        assert_true(emitted_payload.get("action") == "send" and emitted_payload.get("target") == "telegram:7148548566", "Mouth reply payload emitted the wrong message payload")
+        status, sent = request_json(
+            base_url + "/api/mouth/reply-sent",
+            {"command_id": ingested_command_id, "message_id": "regression-message-id"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"Mouth sent marker returned {status}: {sent}")
+        marker = sent.get("sent")
+        assert_true(isinstance(marker, dict) and marker.get("status") == "sent", "Mouth sent marker did not return a sent marker")
+        sent_state = sent.get("state")
+        assert_true(isinstance(sent_state, dict), "Mouth sent marker did not return refreshed state")
+        sent_replies = sent_state.get("mouth_replies")
+        assert_true(isinstance(sent_replies, list), "Mouth sent marker state is missing replies")
+        delivered = next((item for item in sent_replies if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
+        assert_true(((delivered.get("delivery") or {}).get("message_id") == "regression-message-id"), "delivery marker is missing from refreshed state")
     finally:
         proc.terminate()
         try:
