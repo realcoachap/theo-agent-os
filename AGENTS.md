@@ -129,6 +129,8 @@ Irreversible actions require approval before execution.
   - manual checklist attestations in `security/checklist.json`
   - append-only control proof receipts in `runs/control-receipts.jsonl`
   - draft-only Mouth ingress records under `jobs/inbox/<command_id>/`
+  - Mouth lifecycle verdict receipts under `jobs/inbox/<command_id>/glass-verdict.json`
+    plus append-only audit rows in `runs/mouth-verdicts.jsonl`
 - Artifact previews must be declared by valid result envelopes and remain
   inside their run directory. Absolute paths and escaping paths are blocked.
 - HTML artifact previews require `safe_to_render=true` and still render in a

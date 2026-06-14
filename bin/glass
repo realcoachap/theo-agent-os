@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.0 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.1 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -50,6 +50,10 @@ events can be posted into Glass as Mouth drafts through the reviewed
 `bin/mouth-openclaw` wrapper, but the bridge never dispatches jobs or turns chat
 text into shell instructions.
 
+v0.6.1 adds the first Glass-side Mouth lifecycle gate. Admins can approve, hold,
+or reject a Mouth draft/review record, which writes an auditable verdict receipt
+but still does not dispatch work or send Telegram replies by itself.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -84,6 +88,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNS = REPO_ROOT / "runs"
 MOUTH_INBOX = REPO_ROOT / "jobs" / "inbox"
 MOUTH_OUTBOX = REPO_ROOT / "jobs" / "outbox"
+MOUTH_VERDICTS = Path(os.environ.get("THEO_GLASS_MOUTH_VERDICTS_PATH", str(RUNS / "mouth-verdicts.jsonl"))).expanduser()
 MEMORY_QUEUE = REPO_ROOT / "memory" / "queue.jsonl"
 SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
@@ -162,6 +167,8 @@ CONTROL_PROXY_HOP_HEADERS = {
     "upgrade",
 }
 CONTROL_PROXY_PRIVATE_HEADERS = {"cookie", "authorization"}
+MOUTH_VERDICT_STATUS = {"approve": "approved", "hold": "held", "reject": "rejected"}
+MOUTH_VERDICT_VERSION = "0.6.1"
 
 
 def utc_now() -> str:
@@ -738,6 +745,80 @@ def mouth_ingest_event(event: dict[str, object]) -> tuple[dict[str, object] | No
     return record, ""
 
 
+def find_mouth_record(command_id: str) -> tuple[Path | None, dict[str, object] | None]:
+    """Find a Mouth record by its declared id without trusting path-shaped input."""
+    if not command_id or not MOUTH_INBOX.exists():
+        return None, None
+    for path in MOUTH_INBOX.glob("*/mouth.json"):
+        try:
+            data = read_json(path)
+        except Exception:
+            continue
+        if isinstance(data, dict) and str(data.get("command_id") or "") == command_id:
+            return path, data
+    return None, None
+
+
+def mouth_lifecycle(path: Path) -> dict[str, object]:
+    verdict_path = path.parent / "glass-verdict.json"
+    if not verdict_path.exists():
+        return {}
+    try:
+        data = read_json(verdict_path)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_mouth_verdict(command_id: str, verdict: str, note: str, actor: str) -> tuple[dict[str, object] | None, str]:
+    """Write a Glass-only Mouth lifecycle verdict receipt.
+
+    This is an approval surface, not an execution path. The receipt records the
+    operator's decision so a later reviewed dispatch/reply lane can consume a
+    visible gate instead of guessing from chat history.
+    """
+    status = MOUTH_VERDICT_STATUS.get(verdict)
+    if not status:
+        return None, "invalid Mouth verdict"
+    mouth_path, record = find_mouth_record(command_id)
+    if mouth_path is None or record is None:
+        return None, "Mouth command not found"
+    source = record.get("source") if isinstance(record.get("source"), dict) else {}
+    if verdict == "approve" and source.get("trusted") is not True:
+        return None, "cannot approve an untrusted Mouth source"
+    verdict_path = mouth_path.parent / "glass-verdict.json"
+    previous = mouth_lifecycle(mouth_path)
+    history = previous.get("history") if isinstance(previous.get("history"), list) else []
+    entry = {
+        "kind": "mouth_verdict",
+        "version": MOUTH_VERDICT_VERSION,
+        "created_at": utc_now(),
+        "command_id": command_id,
+        "record_path": rel(mouth_path),
+        "verdict": verdict,
+        "status": status,
+        "actor": actor,
+        "note": note[:500],
+    }
+    lifecycle = {
+        "version": MOUTH_VERDICT_VERSION,
+        "noted_by": "Theo",
+        "created_at": previous.get("created_at") or entry["created_at"],
+        "updated_at": entry["created_at"],
+        "command_id": command_id,
+        "status": status,
+        "latest_verdict": verdict,
+        "latest_note": entry["note"],
+        "history": [*history, entry][-20:],
+    }
+    write_json(verdict_path, lifecycle)
+    MOUTH_VERDICTS.parent.mkdir(parents=True, exist_ok=True)
+    with MOUTH_VERDICTS.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**entry, "lifecycle_path": rel(verdict_path)}, sort_keys=True) + "\n")
+    lifecycle["record_path"] = rel(verdict_path)
+    return lifecycle, ""
+
+
 def local_host_header(value: str | None) -> bool:
     if REMOTE_REVIEW or REMOTE_ADMIN:
         return True
@@ -1091,6 +1172,10 @@ def mouth_commands() -> list[dict[str, object]]:
         if isinstance(data, dict):
             row = dict(data)
             row["record_path"] = rel(path)
+            lifecycle = mouth_lifecycle(path)
+            if lifecycle:
+                row["lifecycle"] = lifecycle
+                row["gate_status"] = lifecycle.get("status", "")
             records.append(row)
     return records
 
@@ -1666,7 +1751,7 @@ let pollTimer = null;
 function stateSignature(s) {
   if (!s) return "";
   const runs = (s.runs || []).map(r => `${r.job_id}:${r.status}:${r.state}:${r.finished_at || ""}`);
-  const mouth = (s.mouth || []).map(m => `${m.command_id || m.id || ""}:${m.state || ""}:${(m.delivery || {}).status || ""}`);
+  const mouth = (s.mouth || []).map(m => `${m.command_id || m.id || ""}:${m.state || ""}:${(m.lifecycle || {}).status || ""}:${(m.delivery || {}).status || ""}`);
   const sec = (((s.security || {}).items) || []).map(i => `${i.id}:${i.checked ? 1 : 0}`);
   const props = (s.memory_proposals || []).map(p => p.id);
   const reg = (((s.workers || {}).registry || {}).workers || []).map(w => `${w.name}:${w.status || ""}`);
@@ -2048,18 +2133,36 @@ function artifactCard(a) {
 function renderArtifacts() {
   return `<section class="grid">${(appState.artifacts || []).map(artifactCard).join("") || empty("No artifacts yet.")}</section>`;
 }
+function gateClass(status) {
+  if (status === "approved") return "success";
+  if (status === "held" || status === "rejected") return "blocked";
+  return "";
+}
 function renderMouth() {
-  const commands = (appState.mouth || []).map(m => `<article class="card">
+  const commands = (appState.mouth || []).map(m => {
+    const lifecycle = m.lifecycle || {};
+    const gateStatus = lifecycle.status || "ungated";
+    const gateControls = appState.writes_enabled ? `<div class="timeline-meta">
+      <button onclick="mouthVerdict('${esc(m.command_id)}', 'approve', this)">Approve</button>
+      <button onclick="mouthVerdict('${esc(m.command_id)}', 'hold', this)">Hold</button>
+      <button class="danger" onclick="mouthVerdict('${esc(m.command_id)}', 'reject', this)">Reject</button>
+    </div>` : `<div class="blocked-box">read-only mode: Mouth verdict writes disabled</div>`;
+    return `<article class="card">
     <div class="row"><div class="title mono">${esc(short(m.command_id))}</div><span class="pill ${esc(m.state)}">${esc(m.state)}</span></div>
     <div class="subtle">${esc((m.source || {}).channel)} / ${esc((m.source || {}).sender_label)} / ${esc(m.mode)}</div>
     ${timestampLine("created", m.created_at)}
+    ${timestampLine("gate updated", lifecycle.updated_at)}
     <p>${esc(m.summary)}</p>
+    <div class="row"><span class="pill ${gateClass(gateStatus)}">gate ${esc(gateStatus)}</span>${lifecycle.latest_verdict ? `<span class="pill">${esc(lifecycle.latest_verdict)}</span>` : ""}</div>
     <div class="mono subtle">job ${esc(short(m.job_id))}</div>
     ${m.result_path ? `<div class="mono subtle">result ${esc(m.result_path)}</div>` : ""}
     ${m.receipt_preview ? `<h3>Receipt</h3><pre>${esc(m.receipt_preview)}</pre>` : ""}
+    ${lifecycle.latest_note ? `<div class="subtle">note: ${esc(lifecycle.latest_note)}</div>` : ""}
+    ${gateControls}
     <div class="subtle">${esc(m.record_path || "")}</div>
-    <div class="blocked-box">Glass displays Mouth state only; dispatch still happens through bin/mouth + bin/dispatch.</div>
-  </article>`).join("");
+    <div class="blocked-box">Verdicts write receipts only; dispatch still happens through bin/mouth + bin/dispatch.</div>
+  </article>`;
+  }).join("");
   const replies = (appState.mouth_replies || []).map(r => `<article class="card">
     <div class="row"><div class="title mono">reply ${esc(short(r.command_id))}</div><span class="pill ${r.ok ? "success" : "failed"}">${r.ok ? "ok" : "error"}</span></div>
     <div class="subtle">${esc(r.channel)} / target ${esc(r.target)} / exit ${esc(r.exit_code)}</div>
@@ -2148,14 +2251,15 @@ function missionItems() {
     });
   }
   for (const command of (appState.mouth || []).slice(0, 5)) {
+    const gate = (command.lifecycle || {}).status || "";
     items.push({
       type: "dispatch",
-      ts: command.created_at,
+      ts: (command.lifecycle || {}).updated_at || command.created_at,
       actor: ((command.source || {}).sender_label) || "Theo",
       title: command.summary || "Mouth command received",
-      body: `Command ${short(command.command_id)} is ${command.state || "queued"}.`,
-      status: command.state || "review",
-      meta: [command.mode || "mouth", command.job_id ? `job ${short(command.job_id)}` : ""].filter(Boolean)
+      body: `Command ${short(command.command_id)} is ${command.state || "queued"}${gate ? ` with gate ${gate}` : ""}.`,
+      status: gate || command.state || "review",
+      meta: [command.mode || "mouth", gate ? `gate ${gate}` : "", command.job_id ? `job ${short(command.job_id)}` : ""].filter(Boolean)
     });
   }
   for (const reply of (appState.mouth_replies || []).slice(0, 5)) {
@@ -2233,6 +2337,38 @@ async function refreshSpartacusAction(button) {
     updateSyncIndicator();
   }
 }
+async function mouthVerdict(commandId, verdict, button) {
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = verdict === "approve" ? "Approving..." : verdict === "hold" ? "Holding..." : "Rejecting...";
+  }
+  if (status) status.textContent = `Writing Mouth ${verdict} receipt...`;
+  try {
+    const res = await fetch("/api/mouth/verdict", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({command_id: commandId, verdict})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status") || document.getElementById("control-action-status");
+    if (freshStatus) freshStatus.textContent = `Mouth gate ${((data.lifecycle || {}).status) || verdict} for ${short(commandId)}.`;
+  } catch (err) {
+    if (status) status.textContent = `Mouth verdict blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || verdict;
+    }
+    updateSyncIndicator();
+  }
+}
 function renderMission() {
   const reference = (appState.control_nodes || []).find(n => n.reference) || {};
   const run = focusRun();
@@ -2249,7 +2385,7 @@ function renderMission() {
         </div>
         <span class="pill ${nodeStatusClass(reference)}">${esc(reference.status || "loading")}</span>
       </div>
-      <p class="muted">Live read model for dispatches, runs, receipts, approvals, artifacts, and the Spartacus VPS proof. The command composer is visible but intentionally inert until the receipt gate lands.</p>
+      <p class="muted">Live read model for dispatches, runs, receipts, approvals, artifacts, and the Spartacus VPS proof. Mouth drafts now have visible decision receipts; dispatch remains outside Glass.</p>
       <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
       <div class="timeline-meta">
         <span class="pill success">admin gate</span>
@@ -2268,7 +2404,7 @@ function renderMission() {
         <button type="button" onclick="refreshSpartacusAction(this)">@Spartacus</button>
         <button type="submit">Stage</button>
       </div>
-      <div class="composer-status" id="composer-status">Composer is read-only in this slice; no command is dispatched from Glass.</div>
+      <div class="composer-status" id="composer-status">Mouth gates write receipts only; no command is dispatched from Glass.</div>
     </form>
   </section>`;
 }
@@ -2853,6 +2989,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         data = self.post_json()
         if data is None:
+            return
+        if parsed.path == "/api/mouth/verdict":
+            command_id = data.get("command_id")
+            verdict = data.get("verdict")
+            note = data.get("note", "")
+            if not isinstance(command_id, str) or not isinstance(verdict, str) or not isinstance(note, str):
+                self.send_json({"ok": False, "error": "invalid Mouth verdict payload"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local"
+            lifecycle, error = write_mouth_verdict(command_id, verdict, note, actor)
+            if lifecycle is None:
+                self.send_json({"ok": False, "error": error or "Mouth verdict failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "lifecycle": lifecycle,
+                "state": state(self.admin_authenticated()),
+            })
             return
         if parsed.path == "/api/memory-proposal":
             verdict = data.get("verdict")

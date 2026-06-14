@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.8 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass live-sync regression v0.1.9 - Noted by Theo - 2026-06-14.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -10,6 +10,7 @@ Proves the v0.5.0 admin-door live-state sync stays honest:
 - /api/state still serves a well-formed snapshot,
 - the first cockpit-native Spartacus refresh action writes a visible receipt,
 - the live Telegram-to-Mouth bridge compiles a trusted event into a draft only,
+- the Glass Mouth lifecycle gate writes approve/hold/reject receipts without dispatch,
 - and the old unconditional `setInterval(loadState, 3000)` clobber loop does not
   creep back in (it was the bug that wiped open run details every 3s).
 
@@ -133,16 +134,19 @@ def wait_for_glass(base_url: str, proc: subprocess.Popen[str]) -> None:
 def assert_shell_and_state() -> None:
     port = free_port()
     receipt_path = REPO_ROOT / "runs" / ".test-control-receipts.jsonl"
+    mouth_verdicts_path = REPO_ROOT / "runs" / ".test-mouth-verdicts.jsonl"
     mouth_index = REPO_ROOT / "runs" / "mouth-index.jsonl"
     original_mouth_index = mouth_index.read_text(encoding="utf-8") if mouth_index.exists() else None
     ingested_command_id = ""
     receipt_path.unlink(missing_ok=True)
+    mouth_verdicts_path.unlink(missing_ok=True)
     proc = subprocess.Popen(
         [PYTHON, str(GLASS), "--host", "127.0.0.1", "--port", str(port)],
         cwd=REPO_ROOT,
         env={
             **os.environ,
             "THEO_GLASS_CONTROL_RECEIPTS_PATH": str(receipt_path),
+            "THEO_GLASS_MOUTH_VERDICTS_PATH": str(mouth_verdicts_path),
             "THEO_GLASS_MOUTH_INGEST_SECRET": "shot4-ingest-secret",
             "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS": "7148548566",
             "THEO_TRUSTED_TELEGRAM_IDS": "7148548566",
@@ -165,7 +169,7 @@ def assert_shell_and_state() -> None:
             'Mission Control',
             'mission-control',
             'Mission Details',
-            'Composer is read-only',
+            'Mouth gates write receipts only',
             'function renderMission',
             'function renderControl',
             'Jarvis / Agent OS Control Panel',
@@ -173,6 +177,8 @@ def assert_shell_and_state() -> None:
             'Proof Chain',
             'Spartacus gateway response',
             'function refreshSpartacusAction',
+            'function mouthVerdict',
+            '/api/mouth/verdict',
             'const mobilePrimaryTabs',
             'function renderMobileNav',
             'function selectTab',
@@ -234,6 +240,22 @@ def assert_shell_and_state() -> None:
         mouth_records = ingested_state.get("mouth")
         assert_true(isinstance(mouth_records, list), "refreshed state is missing Mouth records")
         assert_true(any(item.get("command_id") == ingested_command_id for item in mouth_records if isinstance(item, dict)), "new Mouth command is missing from state")
+        status, verdict = request_json(
+            base_url + "/api/mouth/verdict",
+            {"command_id": ingested_command_id, "verdict": "approve"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"Mouth verdict returned {status}: {verdict}")
+        lifecycle = verdict.get("lifecycle")
+        assert_true(isinstance(lifecycle, dict), "Mouth verdict did not return lifecycle receipt")
+        assert_true(lifecycle.get("status") == "approved", "Mouth verdict lifecycle did not approve the command")
+        verdict_state = verdict.get("state")
+        assert_true(isinstance(verdict_state, dict), "Mouth verdict did not return refreshed state")
+        verdict_records = verdict_state.get("mouth")
+        assert_true(isinstance(verdict_records, list), "Mouth verdict state is missing Mouth records")
+        updated = next((item for item in verdict_records if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
+        assert_true(((updated.get("lifecycle") or {}).get("status") == "approved"), "Mouth verdict lifecycle is missing from state")
+        assert_true(mouth_verdicts_path.exists(), "Mouth verdict audit file was not written")
     finally:
         proc.terminate()
         try:
@@ -242,6 +264,7 @@ def assert_shell_and_state() -> None:
             proc.kill()
             proc.wait(timeout=3)
         receipt_path.unlink(missing_ok=True)
+        mouth_verdicts_path.unlink(missing_ok=True)
         if ingested_command_id:
             shutil.rmtree(REPO_ROOT / "jobs" / "inbox" / ingested_command_id, ignore_errors=True)
             shutil.rmtree(REPO_ROOT / "jobs" / "outbox" / ingested_command_id, ignore_errors=True)

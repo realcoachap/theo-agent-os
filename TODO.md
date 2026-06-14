@@ -153,5 +153,8 @@ Noted by Theo - 2026-06-09
   `THEO_TRUSTED_TELEGRAM_IDS` / `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`.
 - [x] Add regression coverage proving unauthorized ingest fails and trusted
   ingest appears in `/api/state` without dispatching.
-- [ ] Deploy to Railway, set the new secret/allowlist env, ingest the current
+- [x] Deploy to Railway, set the new secret/allowlist env, ingest the current
   Telegram turn, and verify it appears in live Glass.
+- [x] Add Glass approve / hold / reject Mouth lifecycle gates with auditable
+  receipts and no dispatch.
+- [ ] Deploy and live-verify the Mouth lifecycle gate.

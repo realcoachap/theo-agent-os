@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.1 Mouth lifecycle gate: admin/local Glass can write
+  approve/hold/reject verdict receipts for existing Mouth records via
+  `POST /api/mouth/verdict`. The receipt is visible in `/api/state`, the Mouth
+  tab, and the Mission timeline, while dispatch and outbound send remain
+  separate reviewed paths.
 - Glass v0.6.0 live Mouth ingress bridge: `POST /api/mouth/ingest` accepts a
   bearer-authenticated runtime event via `THEO_GLASS_MOUTH_INGEST_SECRET`,
   with a body-secret fallback for edge paths that strip headers. It routes the

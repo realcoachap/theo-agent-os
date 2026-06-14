@@ -355,6 +355,19 @@ from Railway env allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` or
 `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`, not from the inbound event body. The
 result is a visible Mouth draft in Glass, not a runnable command.
 
+Glass can add a decision receipt to that draft:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/verdict" \
+  -H "Content-Type: application/json" \
+  -H "X-Theo-Glass: 1" \
+  --data '{"command_id":"<mouth command id>","verdict":"approve"}'
+```
+
+Allowed verdicts are `approve`, `hold`, and `reject`. They write
+`jobs/inbox/<command_id>/glass-verdict.json` plus an append-only audit row, and
+they do not dispatch work or send Telegram replies by themselves.
+
 ## Railway Admin Door
 
 The deployed Railway URL defaults to public read-only review mode. A
