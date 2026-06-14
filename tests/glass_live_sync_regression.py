@@ -219,8 +219,7 @@ def assert_shell_and_state() -> None:
         assert_true(status == 403 and rejected.get("ok") is False, f"unauthorized Mouth ingest did not fail closed: {status} {rejected}")
         status, ingested = request_json(
             base_url + "/api/mouth/ingest",
-            {"event": event},
-            {"Authorization": "Bearer shot4-ingest-secret"},
+            {"event": event, "ingest_secret": "shot4-ingest-secret"},
         )
         assert_true(status == 200, f"Mouth ingest returned {status}: {ingested}")
         record = ingested.get("record")

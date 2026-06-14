@@ -345,14 +345,15 @@ Telegram runtime:
 curl -sS "$GLASS_URL/api/mouth/ingest" \
   -H "Authorization: Bearer $THEO_GLASS_MOUTH_INGEST_SECRET" \
   -H "Content-Type: application/json" \
-  --data '{"event":{"channel":"telegram","chat_id":"telegram:7148548566","message_id":"10398","sender_id":"7148548566","sender":{"label":"A P"},"timestamp":"2026-06-14T03:40:23Z","text":"OK let'\''s get it done"}}'
+  --data '{"ingest_secret":"<same secret if header is stripped>","event":{"channel":"telegram","chat_id":"telegram:7148548566","message_id":"10398","sender_id":"7148548566","sender":{"label":"A P"},"timestamp":"2026-06-14T03:40:23Z","text":"OK let'\''s get it done"}}'
 ```
 
 That endpoint still calls `bin/mouth-openclaw --direct-chat --json` and never
-passes `--dispatch`. Trust comes from Railway env allowlists such as
-`THEO_TRUSTED_TELEGRAM_IDS` or `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`, not
-from the inbound event body. The result is a visible Mouth draft in Glass, not
-a runnable command.
+passes `--dispatch`. The secret can be supplied through the bearer/custom header
+or the `ingest_secret` body fallback when an edge strips headers. Trust comes
+from Railway env allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` or
+`THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`, not from the inbound event body. The
+result is a visible Mouth draft in Glass, not a runnable command.
 
 ## Railway Admin Door
 

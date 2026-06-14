@@ -8,7 +8,8 @@ Noted by Theo - 2026-06-09
 
 - Glass v0.6.0 live Mouth ingress bridge: `POST /api/mouth/ingest` accepts a
   bearer-authenticated runtime event via `THEO_GLASS_MOUTH_INGEST_SECRET`,
-  routes it through the existing `bin/mouth-openclaw` trust wrapper, writes a
+  with a body-secret fallback for edge paths that strip headers. It routes the
+  event through the existing `bin/mouth-openclaw` trust wrapper, writes a
   draft-only Mouth record, and returns refreshed state. It does not dispatch,
   execute shell, or trust inbound Telegram metadata by itself.
 - Glass v0.5.9 mobile header cleanup: phone widths now hide the global

@@ -669,6 +669,12 @@ def mouth_ingest_secret() -> str:
     return os.environ.get(MOUTH_INGEST_SECRET_ENV, "").strip()
 
 
+def mouth_ingest_secret_matches(value: object) -> bool:
+    secret = mouth_ingest_secret()
+    supplied = str(value or "").strip()
+    return bool(secret and supplied and hmac.compare_digest(supplied, secret))
+
+
 def bearer_token(value: str | None) -> str:
     if not value:
         return ""
@@ -684,11 +690,12 @@ def mouth_ingest_authenticated(headers: object) -> bool:
     The event body still goes through `bin/mouth-openclaw`, which recomputes
     Telegram trust from allowlist env rather than trusting request metadata.
     """
-    secret = mouth_ingest_secret()
-    if not secret:
-        return False
     supplied = bearer_token(headers.get("Authorization")) or str(headers.get("X-Theo-Mouth-Ingest") or "").strip()
-    return bool(supplied and hmac.compare_digest(supplied, secret))
+    return mouth_ingest_secret_matches(supplied)
+
+
+def mouth_ingest_body_authenticated(data: dict[str, object]) -> bool:
+    return mouth_ingest_secret_matches(data.get("ingest_secret"))
 
 
 def mouth_ingest_env() -> dict[str, str]:
@@ -2575,16 +2582,6 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def check_mouth_ingest_post(self) -> bool:
-        if REMOTE_REVIEW:
-            self.forbidden("Railway review mode is read-only")
-            return False
-        if not self.check_host():
-            return False
-        if mouth_ingest_authenticated(self.headers):
-            return True
-        return self.check_post()
-
     def handle_login(self) -> None:
         if not REMOTE_ADMIN:
             self.send_json({"ok": False, "error": "admin mode is disabled"}, 404)
@@ -2819,11 +2816,25 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_logout()
             return
         if parsed.path == "/api/mouth/ingest":
-            if not self.check_mouth_ingest_post():
+            if REMOTE_REVIEW:
+                self.forbidden("Railway review mode is read-only")
                 return
+            if not self.check_host():
+                return
+            header_authenticated = mouth_ingest_authenticated(self.headers)
             data = self.post_json()
             if data is None:
                 return
+            if not header_authenticated and not mouth_ingest_body_authenticated(data):
+                if REMOTE_ADMIN and not self.admin_authenticated():
+                    self.send_json({"ok": False, "error": "admin login required", "auth_required": True}, 401)
+                    return
+                if self.headers.get("X-Theo-Glass") != "1":
+                    self.forbidden("missing local Glass write header")
+                    return
+                if not same_origin(self.headers.get("Origin"), self.headers.get("Host")) or not same_origin(self.headers.get("Referer"), self.headers.get("Host")):
+                    self.forbidden("non-local origin rejected")
+                    return
             event = data.get("event")
             if not isinstance(event, dict):
                 self.send_json({"ok": False, "error": "missing event object"}, 400)
