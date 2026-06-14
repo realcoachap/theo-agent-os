@@ -263,5 +263,13 @@ Noted by Theo - 2026-06-09
 - [x] Render composer envelopes in the Mission timeline and right rail.
 - [x] Keep dispatch, connector calls, Telegram sends, and shell execution out
   of the composer path.
-- [ ] Run local regressions, commit, deploy, and live-verify the composer
-  envelope slice.
+- [x] Run local regressions, commit, deploy, and live-verify the composer
+  envelope slice. (2026-06-14: commit `f6d63eb`, Railway deployment
+  `7126d440-ddc9-4924-ab41-53640243c18b` SUCCESS; local py_compile,
+  Glass live-sync, Control proxy, Shot 4 hardening, Mouth reply/session bridge,
+  diff check, and desktop/mobile composer staging smoke passed. Live checks
+  passed: `/login` 200, logged-out `/api/state` 401, guarded deploy receipt
+  Mattermost delivery `sent`, live guarded state exposed `composer_envelopes`,
+  local reply bridge dry-run `pending=0` / `sent=0`, and both Mouth timers
+  active. Live browser composer write was not run because the admin plaintext
+  password is intentionally not stored.)
