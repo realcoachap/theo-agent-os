@@ -273,3 +273,17 @@ Noted by Theo - 2026-06-09
   local reply bridge dry-run `pending=0` / `sent=0`, and both Mouth timers
   active. Live browser composer write was not run because the admin plaintext
   password is intentionally not stored.)
+
+## 2026-06-14 Task: Guarded Read-Only Action Panel
+
+- [x] Add an allowlisted read-action catalog surfaced through `/api/state` as
+  `read_actions`.
+- [x] Add `POST /api/actions/read` for fixed Glass status, repo status, deploy
+  health, QA summary, and OpenBrain search reads.
+- [x] Write append-only read receipts to `runs/read-action-receipts.jsonl` and
+  expose them through `/api/state` as `read_action_receipts`.
+- [x] Mirror read-action summaries into Mattermost team-room receipts without
+  exposing secret-shaped fields.
+- [x] Render the Actions tab and read receipts in the Mission timeline.
+- [ ] Run local regressions, commit, deploy, and live-verify the read-only
+  action panel.

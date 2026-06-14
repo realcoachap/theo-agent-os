@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.9 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.7.0 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -83,6 +83,10 @@ v0.6.9 lets the Mission Control composer write draft operator envelopes. These
 records are review inputs only; they do not dispatch jobs, call providers, or
 execute shell commands.
 
+v0.7.0 adds the first guarded read-only action panel. Actions are allowlisted,
+produce local receipts, and may perform narrow reads such as status summaries,
+repo status, deployment health, QA summaries, and OpenBrain searches.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -110,7 +114,7 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 import urllib.error
 import urllib.request
 
@@ -130,6 +134,7 @@ REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
 CONTROL_RECEIPTS = Path(os.environ.get("THEO_GLASS_CONTROL_RECEIPTS_PATH", str(RUNS / "control-receipts.jsonl"))).expanduser()
 TEAM_ROOM_RECEIPTS = Path(os.environ.get("THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH", str(RUNS / "team-room-receipts.jsonl"))).expanduser()
 COMPOSER_ENVELOPES = Path(os.environ.get("THEO_GLASS_COMPOSER_ENVELOPES_PATH", str(RUNS / "composer-envelopes.jsonl"))).expanduser()
+READ_ACTION_RECEIPTS = Path(os.environ.get("THEO_GLASS_READ_ACTION_RECEIPTS_PATH", str(RUNS / "read-action-receipts.jsonl"))).expanduser()
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
 REMOTE_REVIEW = False
@@ -194,6 +199,8 @@ TEAM_ROOM_BASE_URL_ENV = "THEO_GLASS_TEAM_ROOM_BASE_URL"
 TEAM_ROOM_BASE_URL_DEFAULT = "http://185.111.156.109:8065"
 TEAM_ROOM_WEBHOOK_URL_ENV = "THEO_GLASS_TEAM_ROOM_WEBHOOK_URL"
 TEAM_ROOM_WEBHOOK_TIMEOUT_SECONDS = 3
+OPENBRAIN_URL_ENV = "THEO_GLASS_OPENBRAIN_URL"
+OPENBRAIN_URL_DEFAULT = "http://185.111.156.109:8423"
 TEAM_ROOM_DEFINITIONS = {
     "mission-control": {
         "label": "Mission Control",
@@ -224,6 +231,38 @@ TEAM_ROOM_DEFINITIONS = {
         "label": "Alerts",
         "channel": "alerts",
         "purpose": "urgent operational alerts",
+    },
+}
+READ_ACTION_DEFINITIONS = {
+    "glass-status": {
+        "label": "Glass Status",
+        "purpose": "Summarize current runs, Mouth, receipts, connectors, and control health.",
+        "query_required": False,
+        "room_id": "theo-receipts",
+    },
+    "repo-status": {
+        "label": "Repo Status",
+        "purpose": "Read the Theo Agent OS git branch, dirty state, and latest commit.",
+        "query_required": False,
+        "room_id": "theo-receipts",
+    },
+    "deploy-health": {
+        "label": "Deploy Health",
+        "purpose": "Read Railway/runtime deployment metadata and current Spartacus proof status.",
+        "query_required": False,
+        "room_id": "deploys",
+    },
+    "qa-summary": {
+        "label": "QA Summary",
+        "purpose": "Read local regression/test inventory and the latest TODO verification section.",
+        "query_required": False,
+        "room_id": "fable-qa",
+    },
+    "openbrain-search": {
+        "label": "OpenBrain Search",
+        "purpose": "Search the primary OpenBrain endpoint with a short operator query.",
+        "query_required": True,
+        "room_id": "theo-receipts",
     },
 }
 CONTROL_PROXY_TIMEOUT_SECONDS = 30
@@ -671,6 +710,230 @@ def write_composer_envelope(text: str, actor: str) -> tuple[dict[str, object] | 
     }
     append_composer_envelope(envelope)
     return envelope, ""
+
+
+def read_action_catalog() -> list[dict[str, object]]:
+    return [
+        {
+            "id": action_id,
+            "label": definition["label"],
+            "purpose": definition["purpose"],
+            "query_required": definition["query_required"],
+            "room_id": definition["room_id"],
+            "mode": "read_only",
+        }
+        for action_id, definition in READ_ACTION_DEFINITIONS.items()
+    ]
+
+
+def append_read_action_receipt(entry: dict[str, object]) -> None:
+    READ_ACTION_RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with READ_ACTION_RECEIPTS.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def read_action_receipts(limit: int = 20) -> list[dict[str, object]]:
+    if not READ_ACTION_RECEIPTS.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line in READ_ACTION_RECEIPTS.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+    return list(reversed(rows[-limit:]))
+
+
+def truncated_text(value: object, limit: int = 700) -> str:
+    text = str(value or "").strip()
+    return text[:limit]
+
+
+def safe_lines(value: str, limit: int = 12) -> list[str]:
+    return [line[:220] for line in value.splitlines() if line.strip()][:limit]
+
+
+def run_read_git(args: list[str]) -> tuple[int, str]:
+    proc = run(["git", *args], cwd=REPO_ROOT, timeout=5)
+    return proc.returncode, (proc.stdout or proc.stderr or "").strip()
+
+
+def openbrain_base_url() -> str:
+    return safe_public_url(os.environ.get(OPENBRAIN_URL_ENV, OPENBRAIN_URL_DEFAULT)) or OPENBRAIN_URL_DEFAULT
+
+
+def normalize_openbrain_results(data: object) -> list[dict[str, object]]:
+    if isinstance(data, dict):
+        raw_results = data.get("results") or data.get("items") or data.get("matches") or []
+    elif isinstance(data, list):
+        raw_results = data
+    else:
+        raw_results = []
+    results: list[dict[str, object]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        results.append({
+            "score": item.get("score", ""),
+            "lane": truncated_text(item.get("lane") or item.get("source_type") or "", 80),
+            "source": truncated_text(item.get("source") or item.get("source_path") or item.get("path") or item.get("file") or "", 180),
+            "snippet": truncated_text(item.get("snippet") or item.get("text") or item.get("content") or "", 260),
+        })
+        if len(results) >= 5:
+            break
+    return results
+
+
+def execute_read_action(action_id: str, query: str) -> tuple[dict[str, object] | None, str]:
+    """Run a narrow read-only action from a fixed allowlist."""
+    clean_query = query.strip()[:240]
+    if action_id not in READ_ACTION_DEFINITIONS:
+        return None, "unknown read action"
+    definition = READ_ACTION_DEFINITIONS[action_id]
+    if definition.get("query_required") and not clean_query:
+        return None, "query is required"
+
+    if action_id == "glass-status":
+        runs = load_runs()
+        control = control_nodes()
+        body = {
+            "runs": len(runs),
+            "latest_run": (runs[0] or {}).get("job_id") if runs else "",
+            "mouth_commands": len(mouth_commands()),
+            "mouth_replies": len(mouth_replies()),
+            "team_receipts": len(team_room_receipts()),
+            "composer_envelopes": len(composer_envelopes()),
+            "connectors": len((connector_map().get("connectors") or [])),
+            "reference_node": next((node for node in control if node.get("reference")), {}),
+        }
+        return {
+            "summary": f"Glass has {body['runs']} runs, {body['mouth_commands']} Mouth commands, and {body['connectors']} connector candidates.",
+            "body": body,
+        }, ""
+
+    if action_id == "repo-status":
+        status_code, status_text = run_read_git(["status", "--short", "--branch"])
+        log_code, log_text = run_read_git(["log", "-1", "--oneline"])
+        body = {
+            "status_exit_code": status_code,
+            "latest_commit_exit_code": log_code,
+            "status": safe_lines(status_text, 20),
+            "latest_commit": truncated_text(log_text, 160),
+        }
+        ok = status_code == 0 and log_code == 0
+        return {
+            "summary": "Theo Agent OS repo status read completed." if ok else "Theo Agent OS repo status read was degraded.",
+            "body": body,
+            "status": "success" if ok else "blocked",
+        }, ""
+
+    if action_id == "deploy-health":
+        reference = next((node for node in control_nodes() if node.get("reference")), {})
+        body = {
+            "railway_deployment_id": os.environ.get("RAILWAY_DEPLOYMENT_ID", ""),
+            "railway_environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", ""),
+            "railway_service": os.environ.get("RAILWAY_SERVICE_NAME", ""),
+            "git_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:40],
+            "glass_mode": glass_mode(),
+            "reference_node_status": reference.get("status", ""),
+            "reference_node_responding": reference.get("responding", False),
+            "reference_node_probe": reference.get("probe", ""),
+        }
+        return {
+            "summary": f"Deploy health read completed; Spartacus proof is {body['reference_node_status'] or 'unknown'}.",
+            "body": body,
+        }, ""
+
+    if action_id == "qa-summary":
+        tests = sorted(path.name for path in (REPO_ROOT / "tests").glob("*.py"))
+        todo_tail = safe_lines(TODO.read_text(encoding="utf-8", errors="replace") if (TODO := REPO_ROOT / "TODO.md").exists() else "", 22)
+        body = {
+            "test_files": tests,
+            "test_count": len(tests),
+            "latest_todo_lines": todo_tail[-12:],
+        }
+        return {
+            "summary": f"QA inventory read found {len(tests)} Python regression files.",
+            "body": body,
+        }, ""
+
+    if action_id == "openbrain-search":
+        base = openbrain_base_url().rstrip("/")
+        url = f"{base}/search?{urlencode({'q': clean_query})}"
+        request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=6) as response:
+                raw = response.read(80_000).decode("utf-8", errors="replace")
+                http_status = int(getattr(response, "status", 0) or 0)
+        except urllib.error.HTTPError as exc:
+            return {
+                "summary": f"OpenBrain search returned HTTP {exc.code}.",
+                "body": {"query": clean_query, "http_status": exc.code, "results": []},
+                "status": "blocked",
+            }, ""
+        except Exception as exc:
+            return {
+                "summary": f"OpenBrain search failed: {type(exc).__name__}.",
+                "body": {"query": clean_query, "error": type(exc).__name__, "results": []},
+                "status": "blocked",
+            }, ""
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = {"raw": raw[:1000]}
+        results = normalize_openbrain_results(data)
+        return {
+            "summary": f"OpenBrain search for '{clean_query}' returned {len(results)} visible results.",
+            "body": {"query": clean_query, "http_status": http_status, "results": results},
+        }, ""
+
+    return None, "read action is not implemented"
+
+
+def write_read_action_receipt(action_id: str, query: str, actor: str) -> tuple[dict[str, object] | None, str]:
+    result, error = execute_read_action(action_id, query)
+    if result is None:
+        return None, error or "read action failed"
+    definition = READ_ACTION_DEFINITIONS[action_id]
+    created_at = utc_now()
+    status = str(result.get("status") or "success")
+    receipt = {
+        "id": f"read-action-{int(time.time())}-{secrets.token_hex(3)}",
+        "kind": "read_action_receipt",
+        "version": "0.7.0",
+        "created_at": created_at,
+        "ts": created_at,
+        "actor": actor,
+        "action_id": action_id,
+        "action_label": definition["label"],
+        "query": query.strip()[:240],
+        "status": status if status in TEAM_ROOM_RECEIPT_STATUSES else "success",
+        "summary": truncated_text(result.get("summary"), 700),
+        "body": result.get("body") if isinstance(result.get("body"), dict) else {},
+        "mode": "read_only",
+        "dispatch": "none",
+        "authority": "Read actions are allowlisted reads plus receipts; no mutation, provider write, shell executor, or dispatch is available here.",
+    }
+    append_read_action_receipt(receipt)
+    publish_team_room_receipt(
+        kind="read_action_receipt",
+        title=f"Read action: {definition['label']}",
+        summary=receipt["summary"],
+        status=receipt["status"],
+        room_id=str(definition.get("room_id") or "theo-receipts"),
+        actor=actor,
+        source_id=receipt["id"],
+        fields={
+            "action": action_id,
+            "mode": "read_only",
+            "query": receipt["query"] if action_id == "openbrain-search" else "",
+        },
+    )
+    return receipt, ""
 
 
 def control_node_target(node_id: str) -> tuple[str, int]:
@@ -1907,6 +2170,8 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "mouth_replies": mouth_replies(),
         "workers": workers(),
         "connectors": connector_map(),
+        "read_actions": read_action_catalog(),
+        "read_action_receipts": read_action_receipts(),
         "security": security_checklist(),
         "control_nodes": control_nodes(),
         "control_receipts": control_receipts(),
@@ -2432,7 +2697,7 @@ pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: brea
 </section>
 <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="Mobile sections"></nav>
 <script>
-const tabs = ["Mission Control", "Control", "Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Connectors", "Security"];
+const tabs = ["Mission Control", "Control", "Actions", "Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Connectors", "Security"];
 const mobilePrimaryTabs = ["Mission Control", "Control", "Runs", "Artifacts"];
 let current = "Mission Control";
 let appState = null;
@@ -2468,9 +2733,10 @@ function stateSignature(s) {
   const teamReceipts = (s.team_room_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}:${((r.mattermost || {}).status) || ""}`);
   const connectors = ((((s.connectors || {}).connectors) || [])).map(c => `${c.id}:${c.phase || ""}:${c.status || ""}:${c.risk || ""}`);
   const composer = (s.composer_envelopes || []).map(e => `${e.id}:${e.intent || ""}:${e.state || ""}:${e.created_at || ""}`);
+  const readActions = (s.read_action_receipts || []).map(r => `${r.id}:${r.action_id || ""}:${r.status || ""}:${r.created_at || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, replies, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    control, controlReceipts, teamRooms, teamReceipts, connectors, composer, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, controlReceipts, teamRooms, teamReceipts, connectors, composer, readActions, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -2499,6 +2765,7 @@ function channelLabel(tab) {
   const labels = {
     "Mission Control": "mission-control",
     "Control": "spartacus-control",
+    "Actions": "read-actions",
     "Runs": "runs",
     "Mouth": "mouth",
     "Artifacts": "artifacts",
@@ -2518,6 +2785,7 @@ function tabCount(tab) {
   if (tab === "Artifacts") return (appState.artifacts || []).length;
   if (tab === "Memory Proposals") return (appState.memory_proposals || []).length;
   if (tab === "Control") return (appState.control_nodes || []).filter(n => n.enabled).length;
+  if (tab === "Actions") return (appState.read_action_receipts || []).length;
   if (tab === "Connectors") return (((appState.connectors || {}).connectors) || []).length;
   return "";
 }
@@ -2533,6 +2801,7 @@ function mobileIcon(tab) {
   const icons = {
     "Mission Control": "MC",
     "Control": "CT",
+    "Actions": "AC",
     "Runs": "RN",
     "Artifacts": "AR",
     "Mouth": "MO",
@@ -3080,6 +3349,17 @@ function missionItems() {
       body: `Draft envelope ${short(envelope.id)} targets ${envelope.target || "mission_control"}; dispatch is ${envelope.dispatch || "none"}.`,
       status: "review",
       meta: [envelope.route || "draft_only", envelope.next_gate || "operator_review"].filter(Boolean)
+    });
+  }
+  for (const receipt of (appState.read_action_receipts || []).slice(0, 6)) {
+    items.push({
+      type: "read",
+      ts: receipt.created_at || receipt.ts,
+      actor: receipt.actor || "Glass",
+      title: receipt.action_label || "Read action",
+      body: receipt.summary || "",
+      status: receipt.status || "success",
+      meta: [receipt.mode || "read_only", receipt.action_id || "", receipt.dispatch ? `dispatch ${receipt.dispatch}` : ""].filter(Boolean)
     });
   }
   for (const run of (appState.runs || []).slice(0, 8)) {
@@ -3633,6 +3913,86 @@ function renderWorkers() {
     </article>`).join("")}
   </section>`;
 }
+async function runReadAction(actionId, button) {
+  const status = document.getElementById("composer-status") || document.getElementById("action-run-status");
+  const queryInput = document.getElementById(`read-action-query-${actionId}`);
+  const query = queryInput ? queryInput.value.trim() : "";
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Reading...";
+  }
+  if (status) status.textContent = `Running read-only action ${actionId}...`;
+  try {
+    const res = await fetch("/api/actions/read", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({action_id: actionId, query})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("action-run-status") || document.getElementById("composer-status");
+    if (freshStatus) freshStatus.textContent = `Read receipt ${short((data.receipt || {}).id)} recorded for ${actionId}.`;
+  } catch (err) {
+    if (status) status.textContent = `Read action blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Run";
+    }
+    updateSyncIndicator();
+  }
+}
+function readActionBodyPreview(receipt) {
+  const body = receipt.body || {};
+  if ((receipt.action_id || "") === "openbrain-search") {
+    const results = body.results || [];
+    return results.length
+      ? results.map((item, index) => `${index + 1}. ${item.lane || "source"} · ${item.source || ""}\n${item.snippet || ""}`).join("\n\n")
+      : "No visible OpenBrain results.";
+  }
+  return JSON.stringify(body, null, 2);
+}
+function renderActions() {
+  const actions = appState.read_actions || [];
+  const receipts = appState.read_action_receipts || [];
+  return `<section class="grid">
+    <article class="card">
+      <div class="row"><div class="title">Read Actions</div><span class="pill">allowlisted</span></div>
+      <p class="muted">Actions here can read narrow state and write receipts. They cannot dispatch jobs, mutate providers, call arbitrary URLs, or execute arbitrary shell.</p>
+      <div class="subtle" id="action-run-status">Ready.</div>
+    </article>
+    ${actions.map(action => `<article class="card">
+      <div class="row">
+        <div>
+          <div class="title">${esc(action.label || action.id)}</div>
+          <div class="subtle">${esc(action.mode || "read_only")} · ${esc(action.room_id || "theo-receipts")}</div>
+        </div>
+        <span class="pill success">read</span>
+      </div>
+      <p class="muted">${esc(action.purpose || "")}</p>
+      ${action.query_required ? `<input id="read-action-query-${esc(action.id)}" aria-label="${esc(action.label)} query" placeholder="Search query..." style="width:100%;margin:8px 0 10px;padding:9px;border:1px solid var(--line);border-radius:8px;background:#0b1117;color:var(--text)">` : ""}
+      <button type="button" onclick="runReadAction('${esc(action.id)}', this)">Run</button>
+    </article>`).join("")}
+    <article class="card" style="grid-column:1/-1">
+      <div class="row"><div class="title">Recent Read Receipts</div><span class="pill">${esc(receipts.length)}</span></div>
+      <div class="stack" style="gap:10px;margin-top:10px">
+        ${receipts.slice(0, 8).map(receipt => `<div class="split">
+          <div>
+            <div class="row"><div class="title" style="font-size:13px">${esc(receipt.action_label || receipt.action_id)}</div><span class="pill ${cls(receipt.status)}">${esc(receipt.status || "success")}</span></div>
+            <p class="muted">${esc(receipt.summary || "")}</p>
+            <div class="subtle">${esc(timeLabel(receipt.created_at || receipt.ts))} · ${esc(receipt.mode || "read_only")} · dispatch ${esc(receipt.dispatch || "none")}</div>
+          </div>
+          <pre>${esc(readActionBodyPreview(receipt))}</pre>
+        </div>`).join("") || `<p class="muted">No read receipts yet.</p>`}
+      </div>
+    </article>
+  </section>`;
+}
 function connectorPhaseClass(phase) {
   if (String(phase || "").includes("read")) return "success";
   if (String(phase || "").includes("draft")) return "partial";
@@ -3701,6 +4061,7 @@ function render() {
   if (heading) heading.textContent = channelLabel(current);
   const renderers = {
     "Mission Control": renderMission,
+    "Actions": renderActions,
     "Runs": renderRuns,
     "Mouth": renderMouth,
     "Control": renderControl,
@@ -3735,7 +4096,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.6.7"
+    server_version = "TheoAgentOSGlass/0.7.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -4199,6 +4560,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 "ok": True,
                 "envelope": envelope,
+                "state": state(self.admin_authenticated()),
+            })
+            return
+        if parsed.path == "/api/actions/read":
+            action_id = data.get("action_id")
+            query = data.get("query", "")
+            if not isinstance(action_id, str) or not isinstance(query, str):
+                self.send_json({"ok": False, "error": "invalid read action payload"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local-operator"
+            receipt, error = write_read_action_receipt(action_id, query, actor)
+            if receipt is None:
+                self.send_json({"ok": False, "error": error or "read action failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "receipt": receipt,
                 "state": state(self.admin_authenticated()),
             })
             return

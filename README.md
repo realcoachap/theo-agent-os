@@ -246,6 +246,14 @@ Envelope rows are exposed through `/api/state` as `composer_envelopes` and are
 visible in the Mission timeline/right rail until a later typed handler promotes
 one into a reviewed job, Mouth reply, connector action, or team-room note.
 
+The first guarded action panel is read-only. `/api/state` exposes
+`read_actions` and `read_action_receipts`; `POST /api/actions/read` accepts only
+fixed action ids for Glass status, repo status, deploy health, QA summary, and
+OpenBrain search. These actions write append-only receipts to
+`runs/read-action-receipts.jsonl` and optionally mirror compact no-secret
+summaries to Mattermost. They do not dispatch jobs, execute arbitrary shell,
+mutate providers, install OAuth connectors, or send messages.
+
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where
 `/control/spartacus/` is the canonical Spartacus route and `/control/` remains

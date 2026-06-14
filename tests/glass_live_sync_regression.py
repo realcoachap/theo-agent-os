@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.2.1 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass live-sync regression v0.2.2 - Noted by Theo - 2026-06-14.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -9,6 +9,8 @@ Proves the v0.5.0 admin-door live-state sync stays honest:
   desktop rail,
 - /api/state still serves a well-formed snapshot,
 - the first cockpit-native Spartacus refresh action writes a visible receipt,
+- the guarded read-only action panel records allowlisted status/OpenBrain
+  reads without exposing an executor,
 - the live Telegram-to-Mouth bridge compiles a trusted event into a draft only,
 - the Glass Mouth lifecycle gate writes approve/hold/reject receipts without dispatch,
 - approved Mouth commands can receive a schema-valid, sender-guard-compatible
@@ -35,6 +37,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -135,6 +138,35 @@ class TeamWebhookHandler(BaseHTTPRequestHandler):
         return
 
 
+class OpenBrainHandler(BaseHTTPRequestHandler):
+    queries: list[str] = []
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        query = params.get("q", [""])[0]
+        self.__class__.queries.append(query)
+        payload = {
+            "results": [
+                {
+                    "score": 10.5,
+                    "lane": "memory",
+                    "source_path": "fixture/openbrain",
+                    "snippet": f"OpenBrain fixture result for {query}",
+                }
+            ]
+        }
+        raw = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
 def assert_login_preserves_deep_links() -> None:
     """Control UI links carry token fragments, so login must not drop the URL."""
     src = GLASS.read_text(encoding="utf-8")
@@ -165,6 +197,7 @@ def assert_shell_and_state() -> None:
     mouth_verdicts_path = REPO_ROOT / "runs" / ".test-mouth-verdicts.jsonl"
     team_receipts_path = REPO_ROOT / "runs" / ".test-team-room-receipts.jsonl"
     composer_envelopes_path = REPO_ROOT / "runs" / ".test-composer-envelopes.jsonl"
+    read_receipts_path = REPO_ROOT / "runs" / ".test-read-action-receipts.jsonl"
     mouth_index = REPO_ROOT / "runs" / "mouth-index.jsonl"
     original_mouth_index = mouth_index.read_text(encoding="utf-8") if mouth_index.exists() else None
     ingested_command_id = ""
@@ -172,10 +205,15 @@ def assert_shell_and_state() -> None:
     mouth_verdicts_path.unlink(missing_ok=True)
     team_receipts_path.unlink(missing_ok=True)
     composer_envelopes_path.unlink(missing_ok=True)
+    read_receipts_path.unlink(missing_ok=True)
     TeamWebhookHandler.posts = []
+    OpenBrainHandler.queries = []
     webhook_server = HTTPServer(("127.0.0.1", 0), TeamWebhookHandler)
     webhook_thread = threading.Thread(target=webhook_server.serve_forever, daemon=True)
     webhook_thread.start()
+    openbrain_server = HTTPServer(("127.0.0.1", 0), OpenBrainHandler)
+    openbrain_thread = threading.Thread(target=openbrain_server.serve_forever, daemon=True)
+    openbrain_thread.start()
     proc = subprocess.Popen(
         [PYTHON, str(GLASS), "--host", "127.0.0.1", "--port", str(port)],
         cwd=REPO_ROOT,
@@ -185,8 +223,10 @@ def assert_shell_and_state() -> None:
             "THEO_GLASS_MOUTH_VERDICTS_PATH": str(mouth_verdicts_path),
             "THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH": str(team_receipts_path),
             "THEO_GLASS_COMPOSER_ENVELOPES_PATH": str(composer_envelopes_path),
+            "THEO_GLASS_READ_ACTION_RECEIPTS_PATH": str(read_receipts_path),
             "THEO_GLASS_TEAM_ROOM_WEBHOOK_URL": f"http://127.0.0.1:{webhook_server.server_port}/hooks/glass-test",
             "THEO_GLASS_TEAM_ROOM_RECEIPT_SECRET": "team-receipt-secret",
+            "THEO_GLASS_OPENBRAIN_URL": f"http://127.0.0.1:{openbrain_server.server_port}",
             "THEO_GLASS_MOUTH_INGEST_SECRET": "shot4-ingest-secret",
             "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS": "7148548566",
             "THEO_TRUSTED_TELEGRAM_IDS": "7148548566",
@@ -205,6 +245,7 @@ def assert_shell_and_state() -> None:
             'id="mobile-more-panel"',
             'id="mobile-more-grid"',
             '"Control"',
+            '"Actions"',
             'Theo OS',
             'Mission Control',
             'mission-control',
@@ -223,6 +264,10 @@ def assert_shell_and_state() -> None:
             'composer-input',
             'Composer envelope',
             '/api/composer/envelope',
+            'Read Actions',
+            '/api/actions/read',
+            'read_action_receipts',
+            'function renderActions',
             'Mouth pipeline',
             'function renderMouthFlow',
             'function mouthNextAction',
@@ -254,8 +299,10 @@ def assert_shell_and_state() -> None:
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts", "connectors", "composer_envelopes"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts", "connectors", "composer_envelopes", "read_actions", "read_action_receipts"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
+        read_actions = snapshot.get("read_actions")
+        assert_true(isinstance(read_actions, list) and any(item.get("id") == "openbrain-search" for item in read_actions if isinstance(item, dict)), "/api/state missing OpenBrain read action")
         connectors = (snapshot.get("connectors") or {}).get("connectors")
         assert_true(isinstance(connectors, list) and any(item.get("id") == "github" for item in connectors if isinstance(item, dict)), "/api/state missing GitHub connector candidate")
         status, staged = request_json(
@@ -324,6 +371,41 @@ def assert_shell_and_state() -> None:
         assert_true(isinstance(deploy_record, dict) and deploy_record.get("kind") == "deploy_receipt", "deploy receipt has wrong shape")
         assert_true(deploy_record.get("room_id") == "deploys", "deploy receipt did not target deploys room")
         assert_true("secret_token" not in (deploy_record.get("fields") or {}), "deploy receipt did not scrub secret-shaped fields")
+        status, read_rejected = request_json(
+            base_url + "/api/actions/read",
+            {"action_id": "glass-status"},
+        )
+        assert_true(status == 403 and read_rejected.get("ok") is False, f"unauthorized read action did not fail closed: {status} {read_rejected}")
+        status, missing_query = request_json(
+            base_url + "/api/actions/read",
+            {"action_id": "openbrain-search"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 400 and missing_query.get("ok") is False, f"OpenBrain read action accepted a missing query: {status} {missing_query}")
+        status, glass_read = request_json(
+            base_url + "/api/actions/read",
+            {"action_id": "glass-status"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"glass-status read action returned {status}: {glass_read}")
+        glass_receipt = glass_read.get("receipt")
+        assert_true(isinstance(glass_receipt, dict) and glass_receipt.get("kind") == "read_action_receipt", "glass-status read action did not return a read receipt")
+        assert_true(glass_receipt.get("mode") == "read_only" and glass_receipt.get("dispatch") == "none", "read action receipt is not marked read-only/no-dispatch")
+        status, brain_read = request_json(
+            base_url + "/api/actions/read",
+            {"action_id": "openbrain-search", "query": "Glass roadmap"},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"OpenBrain read action returned {status}: {brain_read}")
+        brain_receipt = brain_read.get("receipt")
+        assert_true(isinstance(brain_receipt, dict) and brain_receipt.get("action_id") == "openbrain-search", "OpenBrain read action did not return the expected receipt")
+        brain_results = (((brain_receipt.get("body") or {}).get("results")) or [])
+        assert_true(isinstance(brain_results, list) and brain_results and brain_results[0].get("source") == "fixture/openbrain", "OpenBrain read action did not normalize fake search results")
+        assert_true(OpenBrainHandler.queries == ["Glass roadmap"], "OpenBrain read action did not call the configured endpoint once")
+        read_state = brain_read.get("state")
+        assert_true(isinstance(read_state, dict), "read action did not return refreshed state")
+        read_receipts = read_state.get("read_action_receipts")
+        assert_true(isinstance(read_receipts, list) and read_receipts[0].get("id") == brain_receipt.get("id"), "latest read action receipt is not first in state")
         event = {
             "version": "0.6.0-test",
             "channel": "telegram",
@@ -461,9 +543,9 @@ def assert_shell_and_state() -> None:
         )
         assert_true(status == 200 and drained.get("pending") == [], "sent reply still appeared in runtime pending replies")
         team_log = team_receipts_path.read_text(encoding="utf-8")
-        for marker in ("control_refresh", "deploy_receipt", "mouth_received", "mouth_verdict", "mouth_reply_draft", "mouth_reply_send_approval", "mouth_reply_sent"):
+        for marker in ("control_refresh", "deploy_receipt", "read_action_receipt", "mouth_received", "mouth_verdict", "mouth_reply_draft", "mouth_reply_send_approval", "mouth_reply_sent"):
             assert_true(marker in team_log, f"team-room receipt log is missing {marker}")
-        assert_true(len(TeamWebhookHandler.posts) >= 7, "fake Mattermost webhook did not receive each receipt class")
+        assert_true(len(TeamWebhookHandler.posts) >= 9, "fake Mattermost webhook did not receive each receipt class")
     finally:
         proc.terminate()
         try:
@@ -473,10 +555,13 @@ def assert_shell_and_state() -> None:
             proc.wait(timeout=3)
         webhook_server.shutdown()
         webhook_server.server_close()
+        openbrain_server.shutdown()
+        openbrain_server.server_close()
         receipt_path.unlink(missing_ok=True)
         mouth_verdicts_path.unlink(missing_ok=True)
         team_receipts_path.unlink(missing_ok=True)
         composer_envelopes_path.unlink(missing_ok=True)
+        read_receipts_path.unlink(missing_ok=True)
         if ingested_command_id:
             shutil.rmtree(REPO_ROOT / "jobs" / "inbox" / ingested_command_id, ignore_errors=True)
             shutil.rmtree(REPO_ROOT / "jobs" / "outbox" / ingested_command_id, ignore_errors=True)

@@ -43,6 +43,10 @@ Noted by Theo - 2026-06-09
   rows deep-link into Control / Agent Room / rooms, Mission Control links
   directly to Agent Room, Mattermost, and Mouth, and Mouth shows the
   approval/draft/queue/sent pipeline as the operator's working view.
+- Glass v0.7.0 starts turning the cockpit into an action panel without crossing
+  the executor line: `/api/actions/read` only runs fixed read-only checks for
+  Glass status, repo status, deploy health, QA inventory, and OpenBrain search,
+  then writes local/Mattermost receipts.
 - Caesar and Theokoles are registry entries, but their routes stay disabled
   until Railway can reach their gateways through Tailscale or another guarded
   relay.

@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.7.0 guarded read-only action panel: `/api/state` now exposes an
+  allowlisted `read_actions` catalog and `read_action_receipts`, while
+  `POST /api/actions/read` can record narrow status, repo, deploy, QA, and
+  OpenBrain search reads. Each action writes a local receipt plus an optional
+  Mattermost team-room receipt, and the path has no shell executor, no provider
+  writes, and no dispatch.
 - Glass v0.6.9 Mission Control composer envelopes: `POST
   /api/composer/envelope` and the Stage button now write inert draft operator
   envelopes to `runs/composer-envelopes.jsonl`, surface them through
