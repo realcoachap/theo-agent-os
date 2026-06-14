@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.5 queued reply sender bridge: Glass can write a separate
+  `send-approved.json` receipt for approved reply drafts, exposes queued-only
+  payloads through a runtime-secret `/api/mouth/pending-replies` endpoint, and
+  accepts runtime-secret `/api/mouth/reply-sent` markers. Local
+  `bin/mouth-reply-bridge` sends only those queued payloads through OpenClaw and
+  stores inflight state before marking Glass sent.
 - Glass v0.6.4 local session bridge: `bin/mouth-session-bridge` mirrors new
   Telegram user turns from the active OpenClaw direct-session transcript into
   Glass `/api/mouth/ingest`, deduped by session record id and draft-only. The

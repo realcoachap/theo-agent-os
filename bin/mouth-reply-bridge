@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Mouth reply bridge v0.1.0 - Noted by Theo - 2026-06-14.
+
+Poll Glass for explicitly queued Mouth reply payloads, send them through the
+local OpenClaw runtime, and mark Glass sent only after OpenClaw returns a
+message id. Drafts without `send-approved.json` are ignored.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_GLASS_URL = "https://glass-production-d7ed.up.railway.app"
+DEFAULT_STATE = REPO_ROOT / "runs" / "mouth-reply-bridge-state.json"
+
+
+class BridgeError(RuntimeError):
+    """Raised for reply bridge failures that should be visible in logs."""
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": "0.1.0", "inflight": {}, "sent": []}
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise BridgeError(f"state file is not an object: {path}")
+    data.setdefault("version", "0.1.0")
+    data.setdefault("inflight", {})
+    data.setdefault("sent", [])
+    return data
+
+
+def endpoint(glass_url: str, path: str) -> str:
+    return glass_url.rstrip("/") + path
+
+
+def post_json(url: str, secret: str, payload: dict[str, object], timeout: int) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/json",
+            "User-Agent": "theo-mouth-reply-bridge/0.1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise BridgeError("Glass returned non-object JSON")
+            data["_status"] = response.status
+            return data
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise BridgeError(f"Glass returned {exc.code}: {body_text[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise BridgeError(f"Glass request failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BridgeError(f"Glass returned invalid JSON: {exc}") from exc
+
+
+def fetch_pending(args: argparse.Namespace, secret: str) -> list[dict[str, Any]]:
+    data = post_json(
+        endpoint(args.glass_url, "/api/mouth/pending-replies"),
+        secret,
+        {"limit": args.limit},
+        args.timeout,
+    )
+    pending = data.get("pending")
+    if not isinstance(pending, list):
+        raise BridgeError("pending replies response did not contain a list")
+    return [item for item in pending if isinstance(item, dict)]
+
+
+def mark_sent(args: argparse.Namespace, secret: str, command_id: str, message_id: str) -> dict[str, Any]:
+    return post_json(
+        endpoint(args.glass_url, "/api/mouth/reply-sent"),
+        secret,
+        {"command_id": command_id, "message_id": message_id},
+        args.timeout,
+    )
+
+
+def clean_target(target: object) -> str:
+    value = str(target or "").strip()
+    if value.startswith("telegram:"):
+        return value.split(":", 1)[1]
+    return value
+
+
+def validate_payload(item: dict[str, Any]) -> tuple[str, str, str]:
+    command_id = str(item.get("command_id") or "").strip()
+    payload = item.get("payload")
+    if not command_id or not isinstance(payload, dict):
+        raise BridgeError("pending reply item is missing command_id/payload")
+    if payload.get("action") != "send":
+        raise BridgeError(f"unsupported payload action for {command_id}: {payload.get('action')}")
+    target = clean_target(payload.get("target"))
+    message = str(payload.get("message") or "").strip()
+    if not target:
+        raise BridgeError(f"queued reply {command_id} has no Telegram target")
+    if not message:
+        raise BridgeError(f"queued reply {command_id} has no message text")
+    return command_id, target, message
+
+
+def parse_cli_json(stdout: str) -> dict[str, Any]:
+    start = stdout.find("{")
+    if start < 0:
+        raise BridgeError(f"OpenClaw message send returned no JSON: {stdout[:500]}")
+    try:
+        data = json.loads(stdout[start:])
+    except json.JSONDecodeError as exc:
+        raise BridgeError(f"OpenClaw message send returned invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise BridgeError("OpenClaw message send returned non-object JSON")
+    return data
+
+
+def message_id_from_result(result: dict[str, Any]) -> str:
+    for key in ("messageId", "message_id", "id"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    payload = result.get("payload")
+    if isinstance(payload, dict):
+        for key in ("messageId", "message_id", "id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    raise BridgeError("OpenClaw message send did not return a message id")
+
+
+def send_message(args: argparse.Namespace, target: str, message: str) -> str:
+    proc = subprocess.run(
+        [
+            args.message_command,
+            "message",
+            "send",
+            "--channel",
+            "telegram",
+            "--target",
+            target,
+            "--message",
+            message,
+            "--json",
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        raise BridgeError(f"OpenClaw message send failed: {proc.stderr or proc.stdout}")
+    result = parse_cli_json(proc.stdout)
+    return message_id_from_result(result)
+
+
+def retry_inflight(args: argparse.Namespace, secret: str, state: dict[str, Any]) -> list[dict[str, str]]:
+    inflight = state.get("inflight")
+    if not isinstance(inflight, dict):
+        inflight = {}
+        state["inflight"] = inflight
+    marked: list[dict[str, str]] = []
+    for command_id, item in list(inflight.items()):
+        if not isinstance(item, dict):
+            inflight.pop(command_id, None)
+            continue
+        message_id = str(item.get("message_id") or "").strip()
+        if not message_id:
+            inflight.pop(command_id, None)
+            continue
+        mark_sent(args, secret, command_id, message_id)
+        inflight.pop(command_id, None)
+        marked.append({"command_id": command_id, "message_id": message_id})
+    return marked
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Send Glass queued Mouth replies through OpenClaw and mark them sent.")
+    parser.add_argument("--glass-url", default=os.environ.get("THEO_GLASS_URL", DEFAULT_GLASS_URL))
+    parser.add_argument("--state", type=Path, default=Path(os.environ.get("THEO_MOUTH_REPLY_BRIDGE_STATE", str(DEFAULT_STATE))))
+    parser.add_argument("--message-command", default=os.environ.get("THEO_OPENCLAW_COMMAND", "openclaw"))
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--max-sends", type=int, default=3)
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args()
+
+
+def print_result(result: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"ok: pending={result['pending']} sent={result['sent']} marked={result['marked']} state={result['state_path']}")
+
+
+def main() -> int:
+    args = parse_args()
+    if args.limit < 1 or args.max_sends < 1:
+        raise BridgeError("--limit and --max-sends must be at least 1")
+    secret = os.environ.get("THEO_GLASS_MOUTH_INGEST_SECRET", "").strip()
+    if not secret:
+        raise BridgeError("THEO_GLASS_MOUTH_INGEST_SECRET is required")
+    state_path = args.state.expanduser()
+    lock_path = state_path.with_suffix(state_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print_result({"ok": True, "pending": 0, "sent": 0, "marked": 0, "state_path": str(state_path), "note": "bridge already running"}, args.json)
+            return 0
+        state = load_state(state_path)
+        marked = [] if args.dry_run else retry_inflight(args, secret, state)
+        pending = fetch_pending(args, secret)
+        sent: list[dict[str, str]] = []
+        dry_runs: list[dict[str, str]] = []
+        inflight = state.get("inflight")
+        if not isinstance(inflight, dict):
+            inflight = {}
+            state["inflight"] = inflight
+        for item in pending:
+            if len(sent) + len(dry_runs) >= args.max_sends:
+                break
+            command_id, target, message = validate_payload(item)
+            if command_id in inflight:
+                continue
+            if args.dry_run:
+                dry_runs.append({"command_id": command_id, "target": target})
+                continue
+            message_id = send_message(args, target, message)
+            inflight[command_id] = {"message_id": message_id, "sent_at": utc_now()}
+            write_json(state_path, state)
+            mark_sent(args, secret, command_id, message_id)
+            inflight.pop(command_id, None)
+            sent.append({"command_id": command_id, "message_id": message_id})
+        if not args.dry_run:
+            existing_sent = state.get("sent", [])
+            if not isinstance(existing_sent, list):
+                existing_sent = []
+            state.update({
+                "version": "0.1.0",
+                "updated_at": utc_now(),
+                "glass_url": args.glass_url,
+                "inflight": inflight,
+                "sent": (existing_sent + sent + marked)[-200:],
+            })
+            write_json(state_path, state)
+        result = {
+            "ok": True,
+            "pending": len(pending),
+            "sent": len(sent),
+            "marked": len(marked),
+            "dry_runs": dry_runs,
+            "state_path": str(state_path),
+        }
+        print_result(result, args.json)
+        return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except BridgeError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(2)

@@ -184,10 +184,12 @@ def assert_shell_and_state() -> None:
             'function mouthVerdict',
             'function mouthReplyDraft',
             'function mouthReplyPayload',
+            'function mouthReplyQueue',
             'function mouthReplySent',
             '/api/mouth/verdict',
             '/api/mouth/reply-draft',
             '/api/mouth/reply-payload',
+            '/api/mouth/reply-send-approval',
             '/api/mouth/reply-sent',
             'const mobilePrimaryTabs',
             'function renderMobileNav',
@@ -281,6 +283,41 @@ def assert_shell_and_state() -> None:
         assert_true(isinstance(replies, list), "Mouth reply draft state is missing replies")
         assert_true(any(item.get("command_id") == ingested_command_id for item in replies if isinstance(item, dict)), "drafted reply is missing from state")
         reply_path = REPO_ROOT / "jobs" / "outbox" / ingested_command_id / "reply.json"
+        status, pending_rejected = request_json(base_url + "/api/mouth/pending-replies", {"limit": 5})
+        assert_true(status == 403 and pending_rejected.get("ok") is False, f"unauthorized pending replies did not fail closed: {status} {pending_rejected}")
+        status, empty_pending = request_json(
+            base_url + "/api/mouth/pending-replies",
+            {"limit": 5},
+            {"Authorization": "Bearer shot4-ingest-secret"},
+        )
+        assert_true(status == 200, f"Mouth pending replies returned {status}: {empty_pending}")
+        assert_true(empty_pending.get("pending") == [], "unqueued reply appeared in runtime pending replies")
+        status, queued = request_json(
+            base_url + "/api/mouth/reply-send-approval",
+            {"command_id": ingested_command_id},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"Mouth send approval returned {status}: {queued}")
+        send_approval = queued.get("send_approval")
+        assert_true(isinstance(send_approval, dict) and send_approval.get("status") == "queued", "Mouth send approval did not queue the reply")
+        queued_state = queued.get("state")
+        assert_true(isinstance(queued_state, dict), "Mouth send approval did not return refreshed state")
+        queued_replies = queued_state.get("mouth_replies")
+        assert_true(isinstance(queued_replies, list), "Mouth send approval state is missing replies")
+        queued_reply = next((item for item in queued_replies if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
+        assert_true(((queued_reply.get("send_approval") or {}).get("status") == "queued"), "queued send approval is missing from state")
+        status, pending = request_json(
+            base_url + "/api/mouth/pending-replies",
+            {"limit": 5},
+            {"Authorization": "Bearer shot4-ingest-secret"},
+        )
+        assert_true(status == 200, f"runtime pending replies returned {status}: {pending}")
+        pending_items = pending.get("pending")
+        assert_true(isinstance(pending_items, list), "runtime pending replies did not return a list")
+        pending_item = next((item for item in pending_items if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
+        pending_payload = pending_item.get("payload") if isinstance(pending_item, dict) else None
+        assert_true(isinstance(pending_payload, dict), "queued reply is missing runtime payload")
+        assert_true(pending_payload.get("action") == "send" and pending_payload.get("target") == "telegram:7148548566", "runtime pending payload has wrong target")
         sender_guard = subprocess.run(
             [PYTHON, "bin/mouth-send-reply", str(reply_path), "--emit-message-json"],
             cwd=REPO_ROOT,
@@ -303,7 +340,7 @@ def assert_shell_and_state() -> None:
         status, sent = request_json(
             base_url + "/api/mouth/reply-sent",
             {"command_id": ingested_command_id, "message_id": "regression-message-id"},
-            {"X-Theo-Glass": "1"},
+            {"Authorization": "Bearer shot4-ingest-secret"},
         )
         assert_true(status == 200, f"Mouth sent marker returned {status}: {sent}")
         marker = sent.get("sent")
@@ -314,6 +351,12 @@ def assert_shell_and_state() -> None:
         assert_true(isinstance(sent_replies, list), "Mouth sent marker state is missing replies")
         delivered = next((item for item in sent_replies if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
         assert_true(((delivered.get("delivery") or {}).get("message_id") == "regression-message-id"), "delivery marker is missing from refreshed state")
+        status, drained = request_json(
+            base_url + "/api/mouth/pending-replies",
+            {"limit": 5},
+            {"Authorization": "Bearer shot4-ingest-secret"},
+        )
+        assert_true(status == 200 and drained.get("pending") == [], "sent reply still appeared in runtime pending replies")
     finally:
         proc.terminate()
         try:

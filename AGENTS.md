@@ -114,6 +114,11 @@ Irreversible actions require approval before execution.
   Telegram direct-session transcript to Glass `/api/mouth/ingest`. It must
   filter to user turns, dedupe by OpenClaw record id, avoid backfilling whole
   chat history on first run, and never dispatch jobs or send replies.
+- `bin/mouth-reply-bridge` is the local runtime sender for Glass replies. It
+  may only send replies returned by Glass `/api/mouth/pending-replies`, which
+  requires the command to be approved, drafted, and explicitly queued through a
+  separate `send-approved.json` receipt. It must mark Glass sent only after
+  OpenClaw returns a delivered message id.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.
@@ -136,6 +141,8 @@ Irreversible actions require approval before execution.
   - Mouth lifecycle verdict receipts under `jobs/inbox/<command_id>/glass-verdict.json`
     plus append-only audit rows in `runs/mouth-verdicts.jsonl`
   - approved Mouth reply drafts under `jobs/outbox/<command_id>/reply.json`
+  - queued Mouth reply send approvals under
+    `jobs/outbox/<command_id>/send-approved.json`
   - Mouth delivery markers under `jobs/outbox/<command_id>/sent.json` after
     OpenClaw reports a delivered message id
 - Artifact previews must be declared by valid result envelopes and remain

@@ -1,0 +1,12 @@
+# Theo Mouth reply bridge user service v0.1.0 - Noted by Theo - 2026-06-14.
+
+[Unit]
+Description=Theo Glass Mouth reply sender bridge
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/coachap/.openclaw/workspace/projects/theo-agent-os
+Environment=THEO_AGENT_OS_REPO=/home/coachap/.openclaw/workspace/projects/theo-agent-os
+Environment=PATH=/home/coachap/.npm-global/bin:/home/coachap/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/coachap/.openclaw/workspace/projects/theo-agent-os/scripts/run-mouth-reply-bridge.sh --json --max-sends 3

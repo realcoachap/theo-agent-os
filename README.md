@@ -402,6 +402,28 @@ That writes `jobs/outbox/<command_id>/reply.json` and validates it against
 `schemas/reply.schema.json`. It still does not deliver the message; delivery
 must go through `bin/mouth-send-reply` and the OpenClaw runtime sender.
 
+Reply drafts do not auto-send. Glass requires a separate queued-send receipt:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/reply-send-approval" \
+  -H "Content-Type: application/json" \
+  -H "X-Theo-Glass: 1" \
+  --data '{"command_id":"<mouth command id>"}'
+```
+
+That writes `jobs/outbox/<command_id>/send-approved.json`. The local runtime
+sender bridge polls only those queued replies:
+
+```bash
+scripts/run-mouth-reply-bridge.sh --dry-run --json
+```
+
+Without `--dry-run`, `bin/mouth-reply-bridge` sends the queued payload through
+`openclaw message send`, stores inflight state in
+`runs/mouth-reply-bridge-state.json`, and calls `/api/mouth/reply-sent` only
+after OpenClaw returns a delivered message id. The optional user timer files
+for this sender live in `ops/systemd/` and contain no secrets.
+
 Runtime delivery handoff stays two-step:
 
 ```bash

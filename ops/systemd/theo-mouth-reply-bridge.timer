@@ -1,0 +1,14 @@
+# Theo Mouth reply bridge user timer v0.1.0 - Noted by Theo - 2026-06-14.
+
+[Unit]
+Description=Run Theo Glass Mouth reply sender bridge every 30 seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+RandomizedDelaySec=5s
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

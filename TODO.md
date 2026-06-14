@@ -184,3 +184,6 @@ Noted by Theo - 2026-06-09
   36 older user turns bootstrapped as seen; immediate rerun and timer reruns
   posted zero duplicates; user timer `theo-mouth-session-bridge.timer` active
   every 30 seconds.)
+- [x] Add a separate queued-send receipt plus a local reply sender bridge so
+  approved reply drafts do not auto-send until Glass writes
+  `send-approved.json`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.3 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.5 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -61,6 +61,10 @@ Telegram delivery still goes through `bin/mouth-send-reply` and OpenClaw.
 v0.6.3 adds the runtime send handoff: Glass can emit the guarded OpenClaw
 message payload for a pending reply and can mark it sent only after the runtime
 returns a message id. It still does not call Telegram itself.
+
+v0.6.5 adds explicit queued-send receipts for reply drafts plus a runtime-secret
+pending replies endpoint. Local OpenClaw may send only replies that Glass has
+approved, drafted, and queued.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -957,6 +961,87 @@ def mark_mouth_reply_sent(command_id: str, message_id: str) -> tuple[dict[str, o
     return sent, ""
 
 
+def mouth_reply_send_approval(path: Path) -> dict[str, object]:
+    approval_path = path.parent / "send-approved.json"
+    if not approval_path.exists():
+        return {}
+    try:
+        data = read_json(approval_path)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def queue_mouth_reply_send(command_id: str, actor: str) -> tuple[dict[str, object] | None, str]:
+    """Write a separate send approval so drafts do not auto-deliver."""
+    reply_path, _reply = find_mouth_reply(command_id)
+    if reply_path is None:
+        return None, "Mouth reply draft not found"
+    sent_path = reply_path.parent / "sent.json"
+    if sent_path.exists():
+        return None, "Mouth reply is already marked sent"
+    mouth_path, _record = find_mouth_record(command_id)
+    if mouth_path is None:
+        return None, "Mouth command not found"
+    lifecycle = mouth_lifecycle(mouth_path)
+    if lifecycle.get("status") != "approved":
+        return None, "Mouth command is not approved"
+    approval_path = reply_path.parent / "send-approved.json"
+    existing = mouth_reply_send_approval(reply_path)
+    if existing:
+        existing["record_path"] = rel(approval_path)
+        return existing, ""
+    approval = {
+        "kind": "mouth_reply_send_approval",
+        "version": "0.6.5",
+        "created_at": utc_now(),
+        "command_id": command_id,
+        "reply_path": rel(reply_path),
+        "approved_by": actor,
+        "status": "queued",
+    }
+    write_json(approval_path, approval)
+    approval["record_path"] = rel(approval_path)
+    return approval, ""
+
+
+def pending_mouth_reply_payloads(limit: int = 10) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Return queued reply payloads for the local runtime sender bridge."""
+    pending: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    if not MOUTH_OUTBOX.exists():
+        return pending, errors
+    for reply_path in sorted(MOUTH_OUTBOX.glob("*/reply.json"), key=lambda item: item.stat().st_mtime):
+        if len(pending) >= limit:
+            break
+        try:
+            reply = read_json(reply_path)
+        except Exception as exc:
+            errors.append({"reply_path": rel(reply_path), "error": f"reply unreadable: {exc}"})
+            continue
+        if not isinstance(reply, dict):
+            continue
+        command_id = str(reply.get("command_id") or "")
+        if not command_id:
+            continue
+        if (reply_path.parent / "sent.json").exists():
+            continue
+        approval = mouth_reply_send_approval(reply_path)
+        if not approval:
+            continue
+        payload, error = mouth_send_reply_payload(command_id)
+        if payload is None:
+            errors.append({"command_id": command_id, "reply_path": rel(reply_path), "error": error or "payload failed"})
+            continue
+        pending.append({
+            "command_id": command_id,
+            "reply_path": rel(reply_path),
+            "approval": approval,
+            "payload": payload,
+        })
+    return pending, errors
+
+
 def local_host_header(value: str | None) -> bool:
     if REMOTE_REVIEW or REMOTE_ADMIN:
         return True
@@ -1343,6 +1428,10 @@ def mouth_replies() -> list[dict[str, object]]:
                 if isinstance(sent, dict):
                     row["delivery"] = sent
                     row["delivery_path"] = rel(sent_path)
+            approval = mouth_reply_send_approval(path)
+            if approval:
+                row["send_approval"] = approval
+                row["send_approval_path"] = rel(path.parent / "send-approved.json")
             records.append(row)
     return records
 
@@ -2312,14 +2401,16 @@ function renderMouth() {
     <div class="row"><div class="title mono">reply ${esc(short(r.command_id))}</div><span class="pill ${r.ok ? "success" : "failed"}">${r.ok ? "ok" : "error"}</span></div>
     <div class="subtle">${esc(r.channel)} / target ${esc(r.target)} / exit ${esc(r.exit_code)}</div>
     ${timestampLine("created", r.created_at)}
-    <div class="subtle">delivery ${(r.delivery || {}).status ? `<span class="pill success">${esc((r.delivery || {}).status)}</span> message ${esc((r.delivery || {}).message_id || "")}` : `<span class="pill blocked">pending</span>`}</div>
+    <div class="subtle">delivery ${(r.delivery || {}).status ? `<span class="pill success">${esc((r.delivery || {}).status)}</span> message ${esc((r.delivery || {}).message_id || "")}` : `<span class="pill blocked">pending</span>`} ${(r.send_approval || {}).status ? `<span class="pill success">send ${esc((r.send_approval || {}).status)}</span>` : ""}</div>
     ${timestampLine("delivered", (r.delivery || {}).created_at)}
     <pre>${esc(r.text || "")}</pre>
     ${appState.writes_enabled && !(r.delivery || {}).status ? `<div class="timeline-meta">
       <button onclick="mouthReplyPayload('${esc(r.command_id)}', this)">Emit Payload</button>
+      <button onclick="mouthReplyQueue('${esc(r.command_id)}', this)" ${(r.send_approval || {}).status ? "disabled" : ""}>${(r.send_approval || {}).status ? "Queued" : "Queue Send"}</button>
       <button onclick="mouthReplySent('${esc(r.command_id)}', this)">Mark Sent</button>
     </div>` : ""}
     ${r.result_path ? `<div class="mono subtle">result ${esc(r.result_path)}</div>` : ""}
+    ${r.send_approval_path ? `<div class="mono subtle">send approval ${esc(r.send_approval_path)}</div>` : ""}
     ${r.delivery_path ? `<div class="mono subtle">delivery ${esc(r.delivery_path)}</div>` : ""}
     <div class="subtle">${esc(r.record_path || "")}</div>
   </article>`).join("");
@@ -2576,6 +2667,38 @@ async function mouthReplyPayload(commandId, button) {
     if (button) {
       button.disabled = false;
       button.textContent = original || "Emit Payload";
+    }
+    updateSyncIndicator();
+  }
+}
+async function mouthReplyQueue(commandId, button) {
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Queuing...";
+  }
+  if (status) status.textContent = `Queuing reply send for ${short(commandId)}...`;
+  try {
+    const res = await fetch("/api/mouth/reply-send-approval", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({command_id: commandId})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status") || document.getElementById("control-action-status");
+    if (freshStatus) freshStatus.textContent = `Reply send queued for ${short(commandId)}.`;
+  } catch (err) {
+    if (status) status.textContent = `Queue send blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Queue Send";
     }
     updateSyncIndicator();
   }
@@ -3230,6 +3353,51 @@ class Handler(BaseHTTPRequestHandler):
                 "state": state(self.admin_authenticated()),
             })
             return
+        if parsed.path == "/api/mouth/pending-replies":
+            if REMOTE_REVIEW:
+                self.forbidden("Railway review mode is read-only")
+                return
+            if not self.check_host():
+                return
+            runtime_authenticated = mouth_ingest_authenticated(self.headers)
+            data = self.post_json()
+            if data is None:
+                return
+            if not runtime_authenticated and not self.check_post():
+                return
+            raw_limit = data.get("limit", 10)
+            limit = raw_limit if isinstance(raw_limit, int) else 10
+            limit = max(1, min(limit, 25))
+            pending, errors = pending_mouth_reply_payloads(limit)
+            self.send_json({"ok": True, "pending": pending, "errors": errors})
+            return
+        if parsed.path == "/api/mouth/reply-sent":
+            if REMOTE_REVIEW:
+                self.forbidden("Railway review mode is read-only")
+                return
+            if not self.check_host():
+                return
+            runtime_authenticated = mouth_ingest_authenticated(self.headers)
+            data = self.post_json()
+            if data is None:
+                return
+            if not runtime_authenticated and not self.check_post():
+                return
+            command_id = data.get("command_id")
+            message_id = data.get("message_id")
+            if not isinstance(command_id, str) or not isinstance(message_id, str):
+                self.send_json({"ok": False, "error": "invalid Mouth sent marker payload"}, 400)
+                return
+            sent, error = mark_mouth_reply_sent(command_id, message_id)
+            if sent is None:
+                self.send_json({"ok": False, "error": error or "Mouth sent marker failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "sent": sent,
+                "state": state(self.admin_authenticated()),
+            })
+            return
         if not self.check_post():
             return
         data = self.post_json()
@@ -3270,6 +3438,22 @@ class Handler(BaseHTTPRequestHandler):
                 "state": state(self.admin_authenticated()),
             })
             return
+        if parsed.path == "/api/mouth/reply-send-approval":
+            command_id = data.get("command_id")
+            if not isinstance(command_id, str):
+                self.send_json({"ok": False, "error": "invalid Mouth send approval request"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local"
+            approval, error = queue_mouth_reply_send(command_id, actor)
+            if approval is None:
+                self.send_json({"ok": False, "error": error or "Mouth send approval failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "send_approval": approval,
+                "state": state(self.admin_authenticated()),
+            })
+            return
         if parsed.path == "/api/mouth/reply-payload":
             command_id = data.get("command_id")
             if not isinstance(command_id, str):
@@ -3280,22 +3464,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": error or "Mouth reply payload failed"}, 400)
                 return
             self.send_json({"ok": True, "payload": payload})
-            return
-        if parsed.path == "/api/mouth/reply-sent":
-            command_id = data.get("command_id")
-            message_id = data.get("message_id")
-            if not isinstance(command_id, str) or not isinstance(message_id, str):
-                self.send_json({"ok": False, "error": "invalid Mouth sent marker payload"}, 400)
-                return
-            sent, error = mark_mouth_reply_sent(command_id, message_id)
-            if sent is None:
-                self.send_json({"ok": False, "error": error or "Mouth sent marker failed"}, 400)
-                return
-            self.send_json({
-                "ok": True,
-                "sent": sent,
-                "state": state(self.admin_authenticated()),
-            })
             return
         if parsed.path == "/api/memory-proposal":
             verdict = data.get("verdict")
