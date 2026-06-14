@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.9 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass live-sync regression v0.2.0 - Noted by Theo - 2026-06-14.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
@@ -11,6 +11,8 @@ Proves the v0.5.0 admin-door live-state sync stays honest:
 - the first cockpit-native Spartacus refresh action writes a visible receipt,
 - the live Telegram-to-Mouth bridge compiles a trusted event into a draft only,
 - the Glass Mouth lifecycle gate writes approve/hold/reject receipts without dispatch,
+- approved Mouth commands can receive a schema-valid, sender-guard-compatible
+  outbound reply draft,
 - and the old unconditional `setInterval(loadState, 3000)` clobber loop does not
   creep back in (it was the bug that wiped open run details every 3s).
 
@@ -178,7 +180,9 @@ def assert_shell_and_state() -> None:
             'Spartacus gateway response',
             'function refreshSpartacusAction',
             'function mouthVerdict',
+            'function mouthReplyDraft',
             '/api/mouth/verdict',
+            '/api/mouth/reply-draft',
             'const mobilePrimaryTabs',
             'function renderMobileNav',
             'function selectTab',
@@ -256,6 +260,31 @@ def assert_shell_and_state() -> None:
         updated = next((item for item in verdict_records if isinstance(item, dict) and item.get("command_id") == ingested_command_id), {})
         assert_true(((updated.get("lifecycle") or {}).get("status") == "approved"), "Mouth verdict lifecycle is missing from state")
         assert_true(mouth_verdicts_path.exists(), "Mouth verdict audit file was not written")
+        status, drafted = request_json(
+            base_url + "/api/mouth/reply-draft",
+            {"command_id": ingested_command_id, "text": "Regression reply draft."},
+            {"X-Theo-Glass": "1"},
+        )
+        assert_true(status == 200, f"Mouth reply draft returned {status}: {drafted}")
+        reply = drafted.get("reply")
+        assert_true(isinstance(reply, dict), "Mouth reply draft did not return reply")
+        assert_true(reply.get("command_id") == ingested_command_id, "Mouth reply draft has wrong command id")
+        drafted_state = drafted.get("state")
+        assert_true(isinstance(drafted_state, dict), "Mouth reply draft did not return refreshed state")
+        replies = drafted_state.get("mouth_replies")
+        assert_true(isinstance(replies, list), "Mouth reply draft state is missing replies")
+        assert_true(any(item.get("command_id") == ingested_command_id for item in replies if isinstance(item, dict)), "drafted reply is missing from state")
+        reply_path = REPO_ROOT / "jobs" / "outbox" / ingested_command_id / "reply.json"
+        sender_guard = subprocess.run(
+            [PYTHON, "bin/mouth-send-reply", str(reply_path), "--emit-message-json"],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert_true(sender_guard.returncode == 0, f"sender guard rejected reply draft: {sender_guard.stderr or sender_guard.stdout}")
+        payload = json.loads(sender_guard.stdout)
+        assert_true(payload.get("action") == "send" and payload.get("target") == "telegram:7148548566", "sender guard emitted the wrong message payload")
     finally:
         proc.terminate()
         try:

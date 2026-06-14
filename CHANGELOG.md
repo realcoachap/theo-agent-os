@@ -6,6 +6,10 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.2 approved reply drafts: `POST /api/mouth/reply-draft` writes a
+  schema-valid `jobs/outbox/<command_id>/reply.json` only after the Mouth
+  command has an approved lifecycle verdict. Delivery still requires
+  `bin/mouth-send-reply` plus the OpenClaw runtime sender.
 - Glass v0.6.1 Mouth lifecycle gate: admin/local Glass can write
   approve/hold/reject verdict receipts for existing Mouth records via
   `POST /api/mouth/verdict`. The receipt is visible in `/api/state`, the Mouth

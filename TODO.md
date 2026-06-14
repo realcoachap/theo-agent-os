@@ -161,3 +161,6 @@ Noted by Theo - 2026-06-09
   deployment `7701aede-4981-4425-9543-57441eb79d93` SUCCESS; live smoke draft
   `bccedabd-8005-4989-a634-fc328a985dc0` approved through
   `/api/mouth/verdict`; unauth `/api/state` and unauth verdict stayed 401.)
+- [x] Add approved Mouth reply drafts that write schema-valid outbox payloads
+  without sending Telegram messages.
+- [ ] Deploy and live-verify the approved reply-draft path.

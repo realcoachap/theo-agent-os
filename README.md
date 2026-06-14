@@ -368,6 +368,19 @@ Allowed verdicts are `approve`, `hold`, and `reject`. They write
 `jobs/inbox/<command_id>/glass-verdict.json` plus an append-only audit row, and
 they do not dispatch work or send Telegram replies by themselves.
 
+Once a command is approved, Glass can prepare a reply draft:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/reply-draft" \
+  -H "Content-Type: application/json" \
+  -H "X-Theo-Glass: 1" \
+  --data '{"command_id":"<mouth command id>","text":"Short operator reply."}'
+```
+
+That writes `jobs/outbox/<command_id>/reply.json` and validates it against
+`schemas/reply.schema.json`. It still does not deliver the message; delivery
+must go through `bin/mouth-send-reply` and the OpenClaw runtime sender.
+
 ## Railway Admin Door
 
 The deployed Railway URL defaults to public read-only review mode. A

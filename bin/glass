@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.1 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.2 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -54,6 +54,10 @@ v0.6.1 adds the first Glass-side Mouth lifecycle gate. Admins can approve, hold,
 or reject a Mouth draft/review record, which writes an auditable verdict receipt
 but still does not dispatch work or send Telegram replies by itself.
 
+v0.6.2 lets Glass draft an outbound reply for an already-approved Mouth command.
+The draft is schema-valid `jobs/outbox/<command_id>/reply.json` only; actual
+Telegram delivery still goes through `bin/mouth-send-reply` and OpenClaw.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -94,6 +98,7 @@ SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
 PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
+REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
 CONTROL_RECEIPTS = Path(os.environ.get("THEO_GLASS_CONTROL_RECEIPTS_PATH", str(RUNS / "control-receipts.jsonl"))).expanduser()
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
@@ -819,6 +824,66 @@ def write_mouth_verdict(command_id: str, verdict: str, note: str, actor: str) ->
     return lifecycle, ""
 
 
+def write_mouth_reply_draft(command_id: str, text: str, actor: str) -> tuple[dict[str, object] | None, str]:
+    """Create a schema-valid outbound reply draft for an approved Mouth command."""
+    message = text.strip()
+    if not message:
+        return None, "reply text is required"
+    if len(message) > 3500:
+        return None, "reply text is too long"
+    mouth_path, record = find_mouth_record(command_id)
+    if mouth_path is None or record is None:
+        return None, "Mouth command not found"
+    lifecycle = mouth_lifecycle(mouth_path)
+    if lifecycle.get("status") != "approved":
+        return None, "Mouth command must be approved before drafting a reply"
+    command_path = mouth_path.parent / "command.json"
+    if not command_path.exists():
+        return None, "Mouth command envelope missing"
+    try:
+        command = read_json(command_path)
+    except Exception as exc:
+        return None, f"Mouth command envelope unreadable: {exc}"
+    if not isinstance(command, dict):
+        return None, "Mouth command envelope invalid"
+    source = command.get("source") if isinstance(command.get("source"), dict) else {}
+    delivery = command.get("delivery") if isinstance(command.get("delivery"), dict) else {}
+    if source.get("trusted") is not True:
+        return None, "cannot draft a reply for an untrusted Mouth source"
+    if delivery.get("reply") == "none":
+        return None, "Mouth command requested no reply"
+    target = str(delivery.get("target") or source.get("chat_id") or "")
+    channel = str(source.get("channel") or "")
+    if not target:
+        return None, "Mouth reply target is missing"
+    out_dir = MOUTH_OUTBOX / command_id
+    sent_path = out_dir / "sent.json"
+    if sent_path.exists():
+        return None, "reply was already marked sent"
+    reply = {
+        "version": "0.6.2",
+        "noted_by": "Theo",
+        "created_at": utc_now(),
+        "command_id": command_id,
+        "job_id": command_id,
+        "channel": channel,
+        "target": target,
+        "ok": True,
+        "exit_code": 0,
+        "result_path": str(record.get("result_path") or ""),
+        "text": message,
+    }
+    reply_path = out_dir / "reply.json"
+    write_json(reply_path, reply)
+    errors = validate_schema(REPLY_SCHEMA, reply_path)
+    if errors:
+        reply_path.unlink(missing_ok=True)
+        return None, "reply schema invalid: " + "; ".join(errors)
+    reply["record_path"] = rel(reply_path)
+    reply["drafted_by"] = actor
+    return reply, ""
+
+
 def local_host_header(value: str | None) -> bool:
     if REMOTE_REVIEW or REMOTE_ADMIN:
         return True
@@ -856,11 +921,15 @@ def path_inside(child: Path, parent: Path) -> bool:
     return child_resolved == parent_resolved or parent_resolved in child_resolved.parents
 
 
-def validate_result(path: Path) -> list[str]:
-    proc = run([str(REPO_ROOT / "bin" / "validate"), str(RESULT_SCHEMA), str(path)])
+def validate_schema(schema: Path, path: Path) -> list[str]:
+    proc = run([str(REPO_ROOT / "bin" / "validate"), str(schema), str(path)])
     if proc.returncode == 0:
         return []
     return [line.strip() for line in (proc.stderr or proc.stdout).splitlines() if line.strip()]
+
+
+def validate_result(path: Path) -> list[str]:
+    return validate_schema(RESULT_SCHEMA, path)
 
 
 def index_entries() -> dict[str, dict[str, object]]:
@@ -1752,13 +1821,14 @@ function stateSignature(s) {
   if (!s) return "";
   const runs = (s.runs || []).map(r => `${r.job_id}:${r.status}:${r.state}:${r.finished_at || ""}`);
   const mouth = (s.mouth || []).map(m => `${m.command_id || m.id || ""}:${m.state || ""}:${(m.lifecycle || {}).status || ""}:${(m.delivery || {}).status || ""}`);
+  const replies = (s.mouth_replies || []).map(r => `${r.command_id}:${r.created_at || ""}:${(r.delivery || {}).status || ""}:${(r.delivery || {}).message_id || ""}`);
   const sec = (((s.security || {}).items) || []).map(i => `${i.id}:${i.checked ? 1 : 0}`);
   const props = (s.memory_proposals || []).map(p => p.id);
   const reg = (((s.workers || {}).registry || {}).workers || []).map(w => `${w.name}:${w.status || ""}`);
   const control = (s.control_nodes || []).map(n => `${n.id}:${n.status}:${n.enabled ? 1 : 0}:${n.route || ""}`);
   const controlReceipts = (s.control_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}`);
   const op = (s.workers || {}).operator || {};
-  return JSON.stringify({runs, mouth, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
+  return JSON.stringify({runs, mouth, replies, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
     control, controlReceipts, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
@@ -2142,10 +2212,12 @@ function renderMouth() {
   const commands = (appState.mouth || []).map(m => {
     const lifecycle = m.lifecycle || {};
     const gateStatus = lifecycle.status || "ungated";
+    const hasReply = (appState.mouth_replies || []).some(r => r.command_id === m.command_id);
     const gateControls = appState.writes_enabled ? `<div class="timeline-meta">
       <button onclick="mouthVerdict('${esc(m.command_id)}', 'approve', this)">Approve</button>
       <button onclick="mouthVerdict('${esc(m.command_id)}', 'hold', this)">Hold</button>
       <button class="danger" onclick="mouthVerdict('${esc(m.command_id)}', 'reject', this)">Reject</button>
+      <button onclick="mouthReplyDraft('${esc(m.command_id)}', this)" ${gateStatus === "approved" && !hasReply ? "" : "disabled"}>Draft Reply</button>
     </div>` : `<div class="blocked-box">read-only mode: Mouth verdict writes disabled</div>`;
     return `<article class="card">
     <div class="row"><div class="title mono">${esc(short(m.command_id))}</div><span class="pill ${esc(m.state)}">${esc(m.state)}</span></div>
@@ -2365,6 +2437,40 @@ async function mouthVerdict(commandId, verdict, button) {
     if (button) {
       button.disabled = false;
       button.textContent = original || verdict;
+    }
+    updateSyncIndicator();
+  }
+}
+async function mouthReplyDraft(commandId, button) {
+  const text = window.prompt("Reply text for this approved Mouth command:");
+  if (!text || !text.trim()) return;
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Drafting...";
+  }
+  if (status) status.textContent = `Writing reply draft for ${short(commandId)}...`;
+  try {
+    const res = await fetch("/api/mouth/reply-draft", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({command_id: commandId, text})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status") || document.getElementById("control-action-status");
+    if (freshStatus) freshStatus.textContent = `Reply draft ready for ${short(commandId)}; delivery still requires OpenClaw sender guard.`;
+  } catch (err) {
+    if (status) status.textContent = `Reply draft blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Draft Reply";
     }
     updateSyncIndicator();
   }
@@ -3005,6 +3111,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 "ok": True,
                 "lifecycle": lifecycle,
+                "state": state(self.admin_authenticated()),
+            })
+            return
+        if parsed.path == "/api/mouth/reply-draft":
+            command_id = data.get("command_id")
+            text = data.get("text")
+            if not isinstance(command_id, str) or not isinstance(text, str):
+                self.send_json({"ok": False, "error": "invalid Mouth reply draft payload"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local"
+            reply, error = write_mouth_reply_draft(command_id, text, actor)
+            if reply is None:
+                self.send_json({"ok": False, "error": error or "Mouth reply draft failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "reply": reply,
                 "state": state(self.admin_authenticated()),
             })
             return
