@@ -157,4 +157,7 @@ Noted by Theo - 2026-06-09
   Telegram turn, and verify it appears in live Glass.
 - [x] Add Glass approve / hold / reject Mouth lifecycle gates with auditable
   receipts and no dispatch.
-- [ ] Deploy and live-verify the Mouth lifecycle gate.
+- [x] Deploy and live-verify the Mouth lifecycle gate. (2026-06-14:
+  deployment `7701aede-4981-4425-9543-57441eb79d93` SUCCESS; live smoke draft
+  `bccedabd-8005-4989-a634-fc328a985dc0` approved through
+  `/api/mouth/verdict`; unauth `/api/state` and unauth verdict stayed 401.)
