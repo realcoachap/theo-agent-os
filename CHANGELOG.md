@@ -6,6 +6,10 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.8 mobile cockpit chrome: the desktop rail collapses on phone
+  widths, safe-area spacing keeps fixed browser/system overlays from covering
+  the interface, and a fixed bottom navigation bar exposes Mission, Control,
+  Runs, Artifacts, plus a More sheet for overflow sections.
 - Glass v0.5.7 adds the first cockpit-native Spartacus action receipt:
   `POST /api/control/spartacus/refresh` forces the existing gateway proof probe,
   writes a local read-only receipt, and renders it in the Mission Control

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass live-sync regression v0.1.6 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass live-sync regression v0.1.7 - Noted by Theo - 2026-06-13.
 
 Proves the v0.5.0 admin-door live-state sync stays honest:
 - the embedded app JS parses (a syntax error there bricks the whole panel),
 - the served shell exposes the sync indicator, Refresh, and Live/Pause controls,
 - the Mission Control cockpit shell markers are present,
+- the mobile cockpit keeps a bottom nav and More sheet available without the
+  desktop rail,
 - /api/state still serves a well-formed snapshot,
 - the first cockpit-native Spartacus refresh action writes a visible receipt,
 - and the old unconditional `setInterval(loadState, 3000)` clobber loop does not
@@ -145,6 +147,9 @@ def assert_shell_and_state() -> None:
             'id="sync-status"',
             'id="refresh-btn"',
             'id="live-btn"',
+            'id="mobile-bottom-nav"',
+            'id="mobile-more-panel"',
+            'id="mobile-more-grid"',
             '"Control"',
             'Theo OS',
             'Mission Control',
@@ -158,6 +163,9 @@ def assert_shell_and_state() -> None:
             'Proof Chain',
             'Spartacus gateway response',
             'function refreshSpartacusAction',
+            'const mobilePrimaryTabs',
+            'function renderMobileNav',
+            'function selectTab',
             '/api/control/spartacus/refresh',
         ):
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
