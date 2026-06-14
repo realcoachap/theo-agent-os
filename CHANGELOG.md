@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.0 live Mouth ingress bridge: `POST /api/mouth/ingest` accepts a
+  bearer-authenticated runtime event via `THEO_GLASS_MOUTH_INGEST_SECRET`,
+  routes it through the existing `bin/mouth-openclaw` trust wrapper, writes a
+  draft-only Mouth record, and returns refreshed state. It does not dispatch,
+  execute shell, or trust inbound Telegram metadata by itself.
 - Glass v0.5.9 mobile header cleanup: phone widths now hide the global
   `Open Control UI` header button because the Control tab owns that entry
   point, hide the live-sync text from the toolbar, and compact the

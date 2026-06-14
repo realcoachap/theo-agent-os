@@ -118,14 +118,17 @@ Irreversible actions require approval before execution.
 
 - `bin/glass` is a localhost-only read surface over `runs/` and declared
   artifacts. It must refuse non-`127.0.0.1` binds.
-- Glass never dispatches jobs, retries jobs, kills jobs, pushes code, proxies
-  OpenClaw, or iframes the Control UI.
+- Glass never dispatches jobs, retries jobs, kills jobs, pushes code, accepts
+  arbitrary upstream proxy targets, or iframes the Control UI. The only Control
+  proxy path is the closed node registry in `bin/glass`.
 - Glass may display Mouth records from `jobs/inbox/*/mouth.json`, but this is a
   read surface only. Mouth execution stays in `bin/mouth` and dispatch stays in
   `bin/dispatch`.
-- The only Glass writes are:
+- The only Glass writes are reviewed append/update lanes:
   - append-only memory verdict entries in `memory/queue.jsonl`
   - manual checklist attestations in `security/checklist.json`
+  - append-only control proof receipts in `runs/control-receipts.jsonl`
+  - draft-only Mouth ingress records under `jobs/inbox/<command_id>/`
 - Artifact previews must be declared by valid result envelopes and remain
   inside their run directory. Absolute paths and escaping paths are blocked.
 - HTML artifact previews require `safe_to_render=true` and still render in a
@@ -143,3 +146,8 @@ Irreversible actions require approval before execution.
 - Railway `--remote-admin` login must throttle repeated failures. The current
   in-process limiter is enough for the single-operator stage; use a durable
   shared limiter before multi-instance or broader team admin mode.
+- `POST /api/mouth/ingest` is the only Glass live-chat ingress lane. It must
+  require admin POST rules or `THEO_GLASS_MOUTH_INGEST_SECRET`, call
+  `bin/mouth-openclaw` without `--dispatch`, and produce draft-only Mouth
+  records. Trust must come from allowlist env such as
+  `THEO_TRUSTED_TELEGRAM_IDS`, never from event metadata alone.

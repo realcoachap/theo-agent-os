@@ -338,6 +338,22 @@ dispatch, retry, kill, or push. In Railway admin mode only, Glass also exposes
 the guarded OpenClaw Control proxy described above; that proxy is a separate
 admin surface and does not give Mouth new execution powers.
 
+Railway admin mode also exposes a narrow live ingress bridge for OpenClaw's
+Telegram runtime:
+
+```bash
+curl -sS "$GLASS_URL/api/mouth/ingest" \
+  -H "Authorization: Bearer $THEO_GLASS_MOUTH_INGEST_SECRET" \
+  -H "Content-Type: application/json" \
+  --data '{"event":{"channel":"telegram","chat_id":"telegram:7148548566","message_id":"10398","sender_id":"7148548566","sender":{"label":"A P"},"timestamp":"2026-06-14T03:40:23Z","text":"OK let'\''s get it done"}}'
+```
+
+That endpoint still calls `bin/mouth-openclaw --direct-chat --json` and never
+passes `--dispatch`. Trust comes from Railway env allowlists such as
+`THEO_TRUSTED_TELEGRAM_IDS` or `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`, not
+from the inbound event body. The result is a visible Mouth draft in Glass, not
+a runnable command.
+
 ## Railway Admin Door
 
 The deployed Railway URL defaults to public read-only review mode. A

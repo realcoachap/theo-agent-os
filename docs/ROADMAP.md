@@ -65,6 +65,13 @@ Shot 4 starts this phase with `schemas/command.schema.json` and `bin/mouth`:
 phone/OpenClaw commands compile into `jobs/inbox/<command_id>/job.json`, then
 optionally run through dispatch and return the existing receipt text.
 
+Glass v0.6.0 adds the first live ingress bridge for this phase:
+`POST /api/mouth/ingest` lets OpenClaw's Telegram runtime post a sanitized event
+into Railway Glass with `THEO_GLASS_MOUTH_INGEST_SECRET`. The endpoint routes
+through `bin/mouth-openclaw --direct-chat --json`, writes a draft-only Mouth
+record, and never dispatches. The next slices are outbound reply receipts back
+to Telegram, then Glass approve / hold / reject gates.
+
 ## Phase 6 - Sandboxed Experiments
 
 - Hermes

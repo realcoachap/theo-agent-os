@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.9 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.6.0 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -45,6 +45,11 @@ v0.5.9 tightens the mobile top chrome after Coach's follow-up screenshot: the
 global Control UI link is hidden on phones because the Control tab owns that
 entry point, and the Refresh/Pause/Logout row is compacted.
 
+v0.6.0 adds the first live Telegram-to-Mouth bridge endpoint. Trusted runtime
+events can be posted into Glass as Mouth drafts through the reviewed
+`bin/mouth-openclaw` wrapper, but the bridge never dispatches jobs or turns chat
+text into shell instructions.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -67,6 +72,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -98,6 +104,9 @@ ADMIN_SESSION_SECRET_ENV = "THEO_GLASS_ADMIN_SESSION_SECRET"
 ADMIN_TTL_ENV = "THEO_GLASS_ADMIN_TTL_SECONDS"
 ADMIN_LOGIN_MAX_FAILURES_ENV = "THEO_GLASS_ADMIN_LOGIN_MAX_FAILURES"
 ADMIN_LOGIN_WINDOW_ENV = "THEO_GLASS_ADMIN_LOGIN_WINDOW_SECONDS"
+MOUTH_INGEST_SECRET_ENV = "THEO_GLASS_MOUTH_INGEST_SECRET"
+MOUTH_INGEST_TRUSTED_TELEGRAM_IDS_ENV = "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS"
+MOUTH_INGEST_TRUSTED_TELEGRAM_CHATS_ENV = "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_CHATS"
 DEFAULT_ADMIN_TTL_SECONDS = 8 * 60 * 60
 DEFAULT_ADMIN_LOGIN_MAX_FAILURES = 5
 DEFAULT_ADMIN_LOGIN_WINDOW_SECONDS = 5 * 60
@@ -654,6 +663,72 @@ def write_json(path: Path, data: object) -> None:
 
 def run(cmd: list[str], cwd: Path | None = None, timeout: int = 5) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+
+
+def mouth_ingest_secret() -> str:
+    return os.environ.get(MOUTH_INGEST_SECRET_ENV, "").strip()
+
+
+def bearer_token(value: str | None) -> str:
+    if not value:
+        return ""
+    scheme, _, token = value.strip().partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return ""
+    return token.strip()
+
+
+def mouth_ingest_authenticated(headers: object) -> bool:
+    """Allow runtime ingress without a browser cookie only when a secret is set.
+
+    The event body still goes through `bin/mouth-openclaw`, which recomputes
+    Telegram trust from allowlist env rather than trusting request metadata.
+    """
+    secret = mouth_ingest_secret()
+    if not secret:
+        return False
+    supplied = bearer_token(headers.get("Authorization")) or str(headers.get("X-Theo-Mouth-Ingest") or "").strip()
+    return bool(supplied and hmac.compare_digest(supplied, secret))
+
+
+def mouth_ingest_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if not env.get("THEO_TRUSTED_TELEGRAM_IDS") and env.get(MOUTH_INGEST_TRUSTED_TELEGRAM_IDS_ENV):
+        env["THEO_TRUSTED_TELEGRAM_IDS"] = env[MOUTH_INGEST_TRUSTED_TELEGRAM_IDS_ENV]
+    if not env.get("THEO_TRUSTED_TELEGRAM_CHATS") and env.get(MOUTH_INGEST_TRUSTED_TELEGRAM_CHATS_ENV):
+        env["THEO_TRUSTED_TELEGRAM_CHATS"] = env[MOUTH_INGEST_TRUSTED_TELEGRAM_CHATS_ENV]
+    return env
+
+
+def mouth_ingest_event(event: dict[str, object]) -> tuple[dict[str, object] | None, str]:
+    """Compile one sanitized runtime event into a Mouth draft through the wrapper."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="glass-mouth-ingest-", delete=False) as handle:
+        json.dump(event, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        event_path = Path(handle.name)
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "bin" / "mouth-openclaw"), "--event", str(event_path), "--direct-chat", "--json"],
+            cwd=REPO_ROOT,
+            env=mouth_ingest_env(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "Mouth ingest timed out"
+    finally:
+        event_path.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout or "Mouth ingest failed").strip()
+    try:
+        record = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return None, f"Mouth ingest returned invalid JSON: {exc}"
+    if not isinstance(record, dict):
+        return None, "Mouth ingest returned a non-object record"
+    return record, ""
 
 
 def local_host_header(value: str | None) -> bool:
@@ -2500,6 +2575,16 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def check_mouth_ingest_post(self) -> bool:
+        if REMOTE_REVIEW:
+            self.forbidden("Railway review mode is read-only")
+            return False
+        if not self.check_host():
+            return False
+        if mouth_ingest_authenticated(self.headers):
+            return True
+        return self.check_post()
+
     def handle_login(self) -> None:
         if not REMOTE_ADMIN:
             self.send_json({"ok": False, "error": "admin mode is disabled"}, 404)
@@ -2732,6 +2817,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         if REMOTE_ADMIN and parsed.path == "/api/logout":
             self.handle_logout()
+            return
+        if parsed.path == "/api/mouth/ingest":
+            if not self.check_mouth_ingest_post():
+                return
+            data = self.post_json()
+            if data is None:
+                return
+            event = data.get("event")
+            if not isinstance(event, dict):
+                self.send_json({"ok": False, "error": "missing event object"}, 400)
+                return
+            record, error = mouth_ingest_event(event)
+            if record is None:
+                self.send_json({"ok": False, "error": error or "Mouth ingest failed"}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "record": record,
+                "state": state(self.admin_authenticated()),
+            })
             return
         if not self.check_post():
             return

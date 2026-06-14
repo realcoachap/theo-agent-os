@@ -140,3 +140,18 @@ Noted by Theo - 2026-06-09
 - [x] Deploy to Railway and verify live admin gates; authenticated refresh action
   verified locally with regression and Playwright smoke because the admin
   plaintext password is intentionally not stored in the workspace.
+
+## 2026-06-14 Task: Live Telegram To Mouth Bridge
+
+- [x] Add a guarded Glass `/api/mouth/ingest` endpoint for OpenClaw runtime
+  Telegram events.
+- [x] Keep ingress draft-only by routing through `bin/mouth-openclaw` without
+  `--dispatch`.
+- [x] Require bearer auth through `THEO_GLASS_MOUTH_INGEST_SECRET` for
+  non-browser runtime posts.
+- [x] Preserve local allowlist trust semantics with
+  `THEO_TRUSTED_TELEGRAM_IDS` / `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`.
+- [x] Add regression coverage proving unauthorized ingest fails and trusted
+  ingest appears in `/api/state` without dispatching.
+- [ ] Deploy to Railway, set the new secret/allowlist env, ingest the current
+  Telegram turn, and verify it appears in live Glass.
