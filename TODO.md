@@ -285,5 +285,13 @@ Noted by Theo - 2026-06-09
 - [x] Mirror read-action summaries into Mattermost team-room receipts without
   exposing secret-shaped fields.
 - [x] Render the Actions tab and read receipts in the Mission timeline.
-- [ ] Run local regressions, commit, deploy, and live-verify the read-only
-  action panel.
+- [x] Run local regressions, commit, deploy, and live-verify the read-only
+  action panel. (2026-06-14: commit `08183db`, Railway deployment
+  `7963432e-fc98-4e3a-b1b6-8ad99d65b9ff` SUCCESS; local py_compile,
+  Glass live-sync, Control proxy, Shot 4 hardening, Mouth reply/session bridge,
+  diff check, and desktop/mobile Actions tab smoke passed. Live checks passed:
+  `/login` 200, logged-out `/api/state` 401, authenticated state exposed
+  5 read actions, Glass Status and OpenBrain read actions wrote success
+  receipts, OpenBrain returned 5 normalized results, deploy receipt
+  Mattermost delivery `sent`, Mattermost ping 200, reply bridge dry-run
+  `pending=0` / `sent=0`, and both Mouth timers active.)
