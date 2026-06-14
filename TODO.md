@@ -226,4 +226,10 @@ Noted by Theo - 2026-06-09
 - [x] Extend the Glass live-sync regression with a fake Mattermost webhook,
   deploy receipt auth checks, and privacy proof that Telegram message text is
   not copied into team-room receipt posts.
-- [ ] Deploy and live-verify the Mattermost receipt slice.
+- [x] Deploy and live-verify the Mattermost receipt slice. (2026-06-14: commit
+  `f7cc8df`, Railway deployment `0139cc50-910a-4cc2-aa18-09a07a65c6e7`
+  SUCCESS; live `/login` returned 200, logged-out `/api/state` returned 401,
+  Mattermost `/api/v4/system/ping` returned 200, live
+  `/api/team-room/deploy-receipt` wrote a `deploy_receipt` into the `deploys`
+  room with Mattermost delivery `sent`, local reply bridge dry-run stayed idle
+  with `pending=0` / `sent=0`, and both Mouth timers remained active.)
