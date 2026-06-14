@@ -38,6 +38,11 @@ Noted by Theo - 2026-06-09
 - Glass v0.5.7 adds the first safe node action inside that cockpit: Refresh
   Spartacus forces the existing proof probe, writes a local read-only receipt,
   and renders it in the timeline/details rail without mutating the remote node.
+- Glass v0.6.6 adds the first practical navigation polish after the live chat
+  loop: `/api/state` exposes allowlisted Mattermost team-room links, agent rail
+  rows deep-link into Control / Agent Room / rooms, Mission Control links
+  directly to Agent Room, Mattermost, and Mouth, and Mouth shows the
+  approval/draft/queue/sent pipeline as the operator's working view.
 - Caesar and Theokoles are registry entries, but their routes stay disabled
   until Railway can reach their gateways through Tailscale or another guarded
   relay.
@@ -70,7 +75,9 @@ Glass v0.6.0 adds the first live ingress bridge for this phase:
 into Railway Glass with `THEO_GLASS_MOUTH_INGEST_SECRET`. The endpoint routes
 through `bin/mouth-openclaw --direct-chat --json`, writes a draft-only Mouth
 record, and never dispatches. The next slices are outbound reply receipts back
-to Telegram, then Glass approve / hold / reject gates.
+to Telegram, then Glass approve / hold / reject gates. Glass v0.6.5 closes the
+queued runtime reply bridge, and v0.6.6 makes the Mouth tab a compact operator
+pipeline over those receipts.
 
 ## Phase 6 - Sandboxed Experiments
 

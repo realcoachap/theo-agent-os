@@ -193,3 +193,14 @@ Noted by Theo - 2026-06-09
   `pending=0`, `sent=0`; `/login` returned 200 and logged-out `/api/state`
   stayed 401; user timer `theo-mouth-reply-bridge.timer` active every
   30 seconds and two journal ticks showed `pending=0`, `sent=0`, `marked=0`.)
+
+## 2026-06-14 Task: Glass Team Room + Mouth UX Polish
+
+- [x] Turn the left agent rail into deep links for the node/team surfaces.
+- [x] Add Mission Control quick jumps into Agent Room and Mouth.
+- [x] Add a compact Mouth receive -> gate -> draft -> queue -> sent pipeline
+  summary.
+- [x] Reframe reply actions around Queue Send and the local runtime bridge.
+- [x] Run local Glass/control/hardening regressions.
+- [ ] Deploy and live-verify the polish slice.
+- [ ] Give Coach the full grounded roadmap after deployment verification.

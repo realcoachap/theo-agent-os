@@ -174,6 +174,16 @@ def assert_shell_and_state() -> None:
             'mission-control',
             'Mission Details',
             'Mouth gates write receipts only',
+            'Open Agent Room',
+            'Open Team Room',
+            'Team Rooms',
+            'team-room-link',
+            'Mouth pipeline',
+            'function renderMouthFlow',
+            'function mouthNextAction',
+            'send_approval',
+            'team_rooms',
+            'data-agent-tab',
             'function renderMission',
             'function renderControl',
             'Jarvis / Agent OS Control Panel',
@@ -199,8 +209,12 @@ def assert_shell_and_state() -> None:
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
+        team_room_ids = {room.get("id") for room in snapshot["team_rooms"]}
+        assert_true({"mission-control", "agent-chatter", "theo-receipts"}.issubset(team_room_ids), "/api/state missing team room links")
+        mission_room = next(room for room in snapshot["team_rooms"] if room.get("id") == "mission-control")
+        assert_true(mission_room.get("configured") is True and str(mission_room.get("url", "")).startswith("http"), "mission team room URL is not configured")
         node_ids = {node.get("id") for node in snapshot["control_nodes"]}
         assert_true({"spartacus", "caesar", "theokoles"}.issubset(node_ids), "/api/state missing Control node registry")
         spartacus = next(node for node in snapshot["control_nodes"] if node.get("id") == "spartacus")

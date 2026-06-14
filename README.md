@@ -211,7 +211,16 @@ a left workspace/channel/agent rail, center live timeline, right Mission
 Details rail, and an inert command composer stub. The cockpit renders from the
 existing `/api/state` snapshot, so it can show runs, Mouth records, receipts,
 artifacts, workers, control receipts, and the Spartacus proof without adding a
-new executor.
+new executor. The agent rail rows deep-link to Control or the Agent Room plus
+the allowlisted Mattermost pilot, and Mission Control has direct Agent Room /
+team-room / Mouth jumps so the operator can move from the live timeline to the
+active team or reply queue without hunting through the sidebar.
+
+Team-room links default to the live Mattermost pilot at
+`http://185.111.156.109:8065`. Channel-specific links can be supplied through
+`THEO_GLASS_TEAM_ROOM_<ROOM_ID>_URL`, for example
+`THEO_GLASS_TEAM_ROOM_AGENT_CHATTER_URL`; the base fallback can be overridden
+with `THEO_GLASS_TEAM_ROOM_BASE_URL`. Glass stores no Mattermost secrets.
 
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where
@@ -422,7 +431,9 @@ Without `--dry-run`, `bin/mouth-reply-bridge` sends the queued payload through
 `openclaw message send`, stores inflight state in
 `runs/mouth-reply-bridge-state.json`, and calls `/api/mouth/reply-sent` only
 after OpenClaw returns a delivered message id. The optional user timer files
-for this sender live in `ops/systemd/` and contain no secrets.
+for this sender live in `ops/systemd/` and contain no secrets. The Glass Mouth
+tab mirrors this as a receive -> gate -> draft -> queue -> sent pipeline and
+keeps Queue Send as the primary operator handoff.
 
 Runtime delivery handoff stays two-step:
 

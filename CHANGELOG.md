@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.6 team-room and Mouth UX polish: `/api/state` exposes an
+  allowlisted Mattermost team-room model, sidebar agent rows now link to
+  Control / Agent Room plus the relevant room, Mission Control exposes direct
+  Agent Room / Mattermost / Mouth jumps, Mouth renders a compact receive ->
+  gate -> draft -> queue -> sent pipeline summary, and reply actions now
+  emphasize Queue Send as the primary bridge handoff.
 - Glass v0.6.5 queued reply sender bridge: Glass can write a separate
   `send-approved.json` receipt for approved reply drafts, exposes queued-only
   payloads through a runtime-secret `/api/mouth/pending-replies` endpoint, and
