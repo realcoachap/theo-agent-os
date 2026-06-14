@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.8 connector map: `registry/connectors.json` captures the
+  Nango-backed connector strategy as policy/readiness data only, with GitHub,
+  Google Calendar, Gmail, Drive/Docs, Notion, and Linear staged by phase, risk,
+  scope boundary, receipts, and blockers. `/api/state` exposes the map as
+  `connectors`, and Glass adds a read-only Connectors tab.
 - Glass v0.6.7 outbound Mattermost receipt spine: safe control refreshes, Mouth
   receive/gate/draft/queue/sent events, and guarded deploy notes now create
   `runs/team-room-receipts.jsonl` records surfaced through `/api/state` as

@@ -233,3 +233,15 @@ Noted by Theo - 2026-06-09
   `/api/team-room/deploy-receipt` wrote a `deploy_receipt` into the `deploys`
   room with Mattermost delivery `sent`, local reply bridge dry-run stayed idle
   with `pending=0` / `sent=0`, and both Mouth timers remained active.)
+
+## 2026-06-14 Task: Nango Connector Map
+
+- [x] Verify current Nango docs for auth/connections/Google/GitHub shape before
+  turning the roadmap into a local connector plan.
+- [x] Add `registry/connectors.json` with provider candidates, phases, risks,
+  scope boundaries, receipt expectations, and blockers.
+- [x] Keep the connector map policy-only: no OAuth install, no provider token
+  storage, and no provider writes.
+- [x] Surface the connector map through `/api/state` as `connectors` and add a
+  read-only Glass Connectors tab.
+- [ ] Run local regressions, commit, deploy, and live-verify the connector map.

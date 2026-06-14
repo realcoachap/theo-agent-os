@@ -1,0 +1,127 @@
+{
+  "version": "0.1.0",
+  "noted_by": "Theo",
+  "updated_at": "2026-06-14",
+  "status": "planned",
+  "purpose": "Theo Agent OS connector map for Nango-backed OAuth/API integrations. This file is planning and policy only; it does not contain provider tokens, client secrets, refresh tokens, or live connection ids.",
+  "sources": [
+    {
+      "label": "Nango introduction",
+      "url": "https://nango.dev/docs/getting-started/intro-to-nango",
+      "note": "Nango handles auth, credential storage, refresh, validation, functions, syncs, actions, and webhooks."
+    },
+    {
+      "label": "Nango auth guide",
+      "url": "https://nango.dev/docs/guides/auth/auth-guide",
+      "note": "A Nango connection stores one user's credentials for one external API and keeps them valid over time."
+    },
+    {
+      "label": "Nango get connection credentials",
+      "url": "https://nango.dev/docs/reference/backend/http-api/connections/get",
+      "note": "Backends should fetch credentials just before use so token refresh is current."
+    },
+    {
+      "label": "Nango Google setup",
+      "url": "https://nango.dev/docs/api-integrations/google",
+      "note": "Google requires an owned OAuth app and explicitly configured scopes."
+    },
+    {
+      "label": "Nango GitHub App OAuth",
+      "url": "https://nango.dev/docs/api-integrations/github-app-oauth",
+      "note": "GitHub App OAuth is the preferred candidate for fine-grained GitHub permissions."
+    }
+  ],
+  "policy": {
+    "read_first": "Start every connector as read-only status/search/sync, with no provider writes and no model-visible credentials.",
+    "drafts_second": "Allow draft artifacts only after read paths prove useful; drafts stay inside Glass/Mouth approval gates.",
+    "writes_last": "Provider writes require explicit operator confirmation, a typed action envelope, and a post-action receipt.",
+    "token_boundary": "Nango/provider credentials stay in Nango or backend runtime calls. Glass state may expose provider keys, connection labels, statuses, and receipts only.",
+    "privacy_boundary": "No broad personal-data sync. Use narrow scopes, source pointers, redaction, and per-connector allowlists before ingesting content into OpenBrain or Obsidian."
+  },
+  "connectors": [
+    {
+      "id": "github",
+      "label": "GitHub",
+      "provider": "nango:github-app-oauth",
+      "owner": "Glass / Agent OS",
+      "phase": "read_only_first",
+      "status": "candidate",
+      "risk": "low",
+      "purpose": "Repo status, issues, pull requests, deploy metadata, commit receipts, and safe code-navigation context.",
+      "first_safe_action": "Read repo metadata and recent workflow/deploy status for explicitly allowlisted repositories.",
+      "scope_boundary": "Prefer GitHub App fine-grained repository permissions; no pushes, issue writes, PR comments, or secret reads in phase 1.",
+      "receipts": "Every fetched repo/deploy/issue summary should produce a Glass connector receipt with source URL and timestamp.",
+      "blocked_until": "Nango project/provider config exists, GitHub App permissions are reviewed, and allowlisted repos are declared."
+    },
+    {
+      "id": "google-calendar",
+      "label": "Google Calendar",
+      "provider": "nango:google",
+      "owner": "Glass / Coach Ops",
+      "phase": "read_only_first",
+      "status": "candidate",
+      "risk": "medium",
+      "purpose": "Upcoming events, schedule context, and future reminder/draft event workflows.",
+      "first_safe_action": "Read next 24-48 hours of calendar events and show summaries in Glass or heartbeat receipts.",
+      "scope_boundary": "Calendar read-only first; event creation/update/delete waits for a separate draft+confirm gate.",
+      "receipts": "Calendar checks should record time window, calendar label, event count, and redacted titles unless Coach opts in.",
+      "blocked_until": "Google OAuth app exists, scopes are narrowed, and private-calendar redaction rules are written."
+    },
+    {
+      "id": "gmail",
+      "label": "Gmail",
+      "provider": "nango:google",
+      "owner": "Glass / OpenMail",
+      "phase": "read_only_first",
+      "status": "candidate",
+      "risk": "high",
+      "purpose": "Urgent unread email detection, sender/thread context, and later draft replies through OpenMail-style gates.",
+      "first_safe_action": "Read unread metadata only from allowlisted labels/categories and surface urgent candidates without body ingestion by default.",
+      "scope_boundary": "No send, delete, archive, mark-read, or body-wide sync in phase 1; draft replies require Glass approval and OpenMail receipts.",
+      "receipts": "Email receipts should include provider thread id, sender/domain, urgency reason, and whether body text was withheld.",
+      "blocked_until": "Label allowlist, retention rule, redaction rule, and draft-only policy are accepted."
+    },
+    {
+      "id": "google-drive-docs",
+      "label": "Google Drive / Docs",
+      "provider": "nango:google-drive",
+      "owner": "OpenBrain / Obsidian",
+      "phase": "read_only_first",
+      "status": "candidate",
+      "risk": "high",
+      "purpose": "Operator-selected docs and files as source material for Obsidian/OpenBrain, with source pointers and no silent broad crawl.",
+      "first_safe_action": "List or fetch only explicitly selected files/folders, then create source receipts before any ingest.",
+      "scope_boundary": "No whole-drive sync, no shared-drive crawl, and no health/personal docs ingest without explicit selection.",
+      "receipts": "Drive receipts should record file id, title, mime type, selected range/folder, ingest target, and privacy label.",
+      "blocked_until": "Picker/allowlist UX exists and OpenBrain/Obsidian ingest rules are reviewed."
+    },
+    {
+      "id": "notion",
+      "label": "Notion",
+      "provider": "nango:notion",
+      "owner": "Future Docs",
+      "phase": "later",
+      "status": "deferred",
+      "risk": "medium",
+      "purpose": "Optional workspace docs/tasks sync if Coach actually uses Notion for an active project.",
+      "first_safe_action": "Read selected database/page metadata only.",
+      "scope_boundary": "No page writes or database mutations before GitHub/Calendar/Gmail prove the connector pattern.",
+      "receipts": "Notion receipts should capture selected page/database id, action, and write gate state.",
+      "blocked_until": "A real Coach workflow requires Notion and the first three connector pilots are stable."
+    },
+    {
+      "id": "linear",
+      "label": "Linear",
+      "provider": "nango:linear",
+      "owner": "Future Workflows",
+      "phase": "later",
+      "status": "deferred",
+      "risk": "medium",
+      "purpose": "Optional issue/project tracker bridge if Theo OS moves beyond GitHub/TODO.md for work tracking.",
+      "first_safe_action": "Read assigned issues and project status for selected workspaces.",
+      "scope_boundary": "No issue creation, comments, labels, or status changes before a typed task envelope exists.",
+      "receipts": "Linear receipts should record issue id, project id, read/write mode, and linked Glass run id.",
+      "blocked_until": "Coach picks Linear as an actual operating surface."
+    }
+  ]
+}

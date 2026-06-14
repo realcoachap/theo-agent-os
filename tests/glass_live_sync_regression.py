@@ -211,8 +211,11 @@ def assert_shell_and_state() -> None:
             'Open Team Room',
             'Team Rooms',
             'Team Receipts',
+            'Connector Map',
+            'Nango is the planned OAuth',
             'team-room-link',
             'team_room_receipts',
+            'function renderConnectors',
             'Mattermost delivery',
             'Mouth pipeline',
             'function renderMouthFlow',
@@ -245,8 +248,10 @@ def assert_shell_and_state() -> None:
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts", "connectors"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
+        connectors = (snapshot.get("connectors") or {}).get("connectors")
+        assert_true(isinstance(connectors, list) and any(item.get("id") == "github" for item in connectors if isinstance(item, dict)), "/api/state missing GitHub connector candidate")
         team_room_ids = {room.get("id") for room in snapshot["team_rooms"]}
         assert_true({"mission-control", "agent-chatter", "theo-receipts"}.issubset(team_room_ids), "/api/state missing team room links")
         mission_room = next(room for room in snapshot["team_rooms"] if room.get("id") == "mission-control")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.7 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.8 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -76,6 +76,9 @@ team-room receipts for Mouth gates, reply drafts, send queues, delivery
 markers, deploy notes, and safe control refreshes, then optionally posts a
 compact no-secret summary through an allowlisted Mattermost incoming webhook.
 
+v0.6.8 adds the first connector map surface. It is a policy/readiness map only:
+no OAuth install, no provider token storage, and no connector write actions.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -116,6 +119,7 @@ MOUTH_VERDICTS = Path(os.environ.get("THEO_GLASS_MOUTH_VERDICTS_PATH", str(RUNS 
 MEMORY_QUEUE = REPO_ROOT / "memory" / "queue.jsonl"
 SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
+CONNECTOR_MAP = REPO_ROOT / "registry" / "connectors.json"
 PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
 REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
@@ -1728,6 +1732,37 @@ def workers() -> dict[str, object]:
     return {"registry": registry, "operator": operator_status()}
 
 
+def connector_map() -> dict[str, object]:
+    """Load the planned connector registry without touching provider auth."""
+    if not CONNECTOR_MAP.exists():
+        return {
+            "version": "0.0.0",
+            "status": "missing",
+            "policy": {},
+            "connectors": [],
+        }
+    try:
+        data = read_json(CONNECTOR_MAP)
+    except Exception as exc:
+        return {
+            "version": "0.0.0",
+            "status": "unreadable",
+            "error": type(exc).__name__,
+            "policy": {},
+            "connectors": [],
+        }
+    if not isinstance(data, dict):
+        return {
+            "version": "0.0.0",
+            "status": "invalid",
+            "policy": {},
+            "connectors": [],
+        }
+    data.setdefault("status", "planned")
+    data.setdefault("connectors", [])
+    return data
+
+
 def mouth_commands() -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     if not MOUTH_INBOX.exists():
@@ -1796,6 +1831,7 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "mouth": mouth_commands(),
         "mouth_replies": mouth_replies(),
         "workers": workers(),
+        "connectors": connector_map(),
         "security": security_checklist(),
         "control_nodes": control_nodes(),
         "control_receipts": control_receipts(),
@@ -2320,7 +2356,7 @@ pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: brea
 </section>
 <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="Mobile sections"></nav>
 <script>
-const tabs = ["Mission Control", "Control", "Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Security"];
+const tabs = ["Mission Control", "Control", "Runs", "Mouth", "Artifacts", "Repo Maps", "Specs", "Memory Proposals", "Workers", "Connectors", "Security"];
 const mobilePrimaryTabs = ["Mission Control", "Control", "Runs", "Artifacts"];
 let current = "Mission Control";
 let appState = null;
@@ -2354,9 +2390,10 @@ function stateSignature(s) {
   const controlReceipts = (s.control_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}`);
   const teamRooms = (s.team_rooms || []).map(r => `${r.id}:${r.url || ""}:${r.deep_linked ? 1 : 0}`);
   const teamReceipts = (s.team_room_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}:${((r.mattermost || {}).status) || ""}`);
+  const connectors = ((((s.connectors || {}).connectors) || [])).map(c => `${c.id}:${c.phase || ""}:${c.status || ""}:${c.risk || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, replies, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    control, controlReceipts, teamRooms, teamReceipts, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, controlReceipts, teamRooms, teamReceipts, connectors, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -2392,6 +2429,7 @@ function channelLabel(tab) {
     "Specs": "specs",
     "Memory Proposals": "memory",
     "Workers": "agent-room",
+    "Connectors": "connectors",
     "Security": "security"
   };
   return labels[tab] || String(tab || "").toLowerCase().replaceAll(" ", "-");
@@ -2403,6 +2441,7 @@ function tabCount(tab) {
   if (tab === "Artifacts") return (appState.artifacts || []).length;
   if (tab === "Memory Proposals") return (appState.memory_proposals || []).length;
   if (tab === "Control") return (appState.control_nodes || []).filter(n => n.enabled).length;
+  if (tab === "Connectors") return (((appState.connectors || {}).connectors) || []).length;
   return "";
 }
 function mobileLabel(tab) {
@@ -2424,6 +2463,7 @@ function mobileIcon(tab) {
     "Specs": "SP",
     "Memory Proposals": "ME",
     "Workers": "AG",
+    "Connectors": "CO",
     "Security": "SE"
   };
   return icons[tab] || tab.slice(0, 2).toUpperCase();
@@ -3471,6 +3511,47 @@ function renderWorkers() {
     </article>`).join("")}
   </section>`;
 }
+function connectorPhaseClass(phase) {
+  if (String(phase || "").includes("read")) return "success";
+  if (String(phase || "").includes("draft")) return "partial";
+  return "blocked";
+}
+function renderConnectors() {
+  const model = appState.connectors || {};
+  const connectors = model.connectors || [];
+  const policy = model.policy || {};
+  return `<section class="grid">
+    <article class="card">
+      <div class="row"><div class="title">Connector Map</div><span class="pill">${esc(model.status || "planned")}</span></div>
+      <p class="muted">Nango is the planned OAuth/credential layer; Glass keeps only connector policy, readiness, receipts, and approval gates.</p>
+      <div class="stack" style="gap:8px">
+        <div class="row"><div><div class="title" style="font-size:13px">Read first</div><div class="subtle">${esc(policy.read_first || "No read policy recorded")}</div></div><span class="pill success">phase 1</span></div>
+        <div class="row"><div><div class="title" style="font-size:13px">Draft second</div><div class="subtle">${esc(policy.drafts_second || "No draft policy recorded")}</div></div><span class="pill partial">phase 2</span></div>
+        <div class="row"><div><div class="title" style="font-size:13px">Writes last</div><div class="subtle">${esc(policy.writes_last || "No write policy recorded")}</div></div><span class="pill blocked">phase 3</span></div>
+      </div>
+    </article>
+    ${connectors.map(connector => `<article class="card">
+      <div class="row">
+        <div>
+          <div class="title">${esc(connector.label || connector.id)}</div>
+          <div class="subtle">${esc(connector.provider || "provider TBD")} · ${esc(connector.owner || "unassigned")}</div>
+        </div>
+        <span class="pill ${connectorPhaseClass(connector.phase)}">${esc(connector.phase || "planned")}</span>
+      </div>
+      <p class="muted">${esc(connector.purpose || "")}</p>
+      <div class="stack" style="gap:8px">
+        <div><span class="subtle">First safe action</span><div>${esc(connector.first_safe_action || "not set")}</div></div>
+        <div><span class="subtle">Scopes boundary</span><div>${esc(connector.scope_boundary || "not set")}</div></div>
+        <div><span class="subtle">Receipts</span><div>${esc(connector.receipts || "not set")}</div></div>
+        <div><span class="subtle">Blocked until</span><div>${esc(connector.blocked_until || "not set")}</div></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="pill ${connector.risk === "low" ? "success" : connector.risk === "medium" ? "partial" : "blocked"}">risk ${esc(connector.risk || "unknown")}</span>
+        <span class="pill">${esc(connector.status || "not configured")}</span>
+      </div>
+    </article>`).join("") || empty("No connectors mapped yet.")}
+  </section>`;
+}
 async function updateCheck(item, checked, box) {
   const res = await fetch("/api/security-check", {
     method: "POST",
@@ -3506,6 +3587,7 @@ function render() {
     "Specs": renderSpecs,
     "Memory Proposals": renderProposals,
     "Workers": renderWorkers,
+    "Connectors": renderConnectors,
     "Security": renderSecurity
   };
   document.getElementById("app").innerHTML = renderers[current]();

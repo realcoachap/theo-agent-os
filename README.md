@@ -232,6 +232,13 @@ events, and guarded deploy notes. Deploy automation can call
 or the existing runtime ingress secret; secret-shaped receipt fields are
 scrubbed before they are stored or posted.
 
+The connector map lives at `registry/connectors.json` and is surfaced through
+`/api/state` as `connectors` plus the Glass Connectors tab. It is policy and
+readiness only: no OAuth installation, no provider token storage, and no
+provider write actions. The current plan is Nango-backed auth/credential
+handling with GitHub and Google-family connectors evaluated read-only first,
+drafts second, and writes last behind typed action envelopes and receipts.
+
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where
 `/control/spartacus/` is the canonical Spartacus route and `/control/` remains
