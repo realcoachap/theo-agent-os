@@ -6,6 +6,10 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.9 mobile header cleanup: phone widths now hide the global
+  `Open Control UI` header button because the Control tab owns that entry
+  point, hide the live-sync text from the toolbar, and compact the
+  Refresh/Pause/Logout row so content starts higher.
 - Glass v0.5.8 mobile cockpit chrome: the desktop rail collapses on phone
   widths, safe-area spacing keeps fixed browser/system overlays from covering
   the interface, and a fixed bottom navigation bar exposes Mission, Control,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.8 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.9 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -40,6 +40,10 @@ v0.5.8 fixes the mobile cockpit chrome after Coach's screenshot review: desktop
 rails collapse on phone widths, safe-area spacing keeps browser/system overlays
 off the interface, and a fixed bottom navigation bar exposes primary sections
 with a More sheet for overflow.
+
+v0.5.9 tightens the mobile top chrome after Coach's follow-up screenshot: the
+global Control UI link is hidden on phones because the Control tab owns that
+entry point, and the Refresh/Pause/Logout row is compacted.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -1356,16 +1360,21 @@ pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: brea
     min-height: auto;
     align-items: flex-start;
     flex-direction: column;
-    padding-top: max(14px, env(safe-area-inset-top));
+    gap: 8px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-bottom: 10px;
     background: rgba(15, 21, 28, 0.98);
     box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
   }
   .channel-title { width: 100%; align-items: flex-start; }
-  .channel-title h1 { font-size: 20px; line-height: 1.15; overflow-wrap: anywhere; }
-  .toolbar { width: 100%; justify-content: flex-start; }
-  .toolbar button, .toolbar a.button { min-height: 42px; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; }
+  .channel-title .pill { min-height: 28px; min-width: 28px; justify-content: center; padding: 0; }
+  .channel-title h1 { font-size: 18px; line-height: 1.12; overflow-wrap: anywhere; }
+  #stamp { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #sync-status { display: none; }
+  .toolbar { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; justify-content: stretch; }
+  .toolbar button, .toolbar a.button { min-height: 36px; padding: 0 8px; font-size: 12px; flex: initial; display: inline-flex; align-items: center; justify-content: center; }
   .toolbar .hidden { display: none; }
-  .toolbar #control-link:not(.hidden) { flex-basis: 100%; }
+  .toolbar #control-link { display: none !important; }
   main, .topbar, .live-strip { padding-left: 14px; padding-right: 14px; }
   .live-strip { align-items: flex-start; flex-direction: column; padding-top: 10px; padding-bottom: 10px; }
   main { padding-bottom: 92px; overflow: visible; }
@@ -2411,7 +2420,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.5.8"
+    server_version = "TheoAgentOSGlass/0.5.9"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
