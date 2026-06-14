@@ -137,4 +137,6 @@ Noted by Theo - 2026-06-09
 - [x] Add regression markers for the new cockpit shell.
 - [x] Add the first cockpit-native Spartacus refresh action with a read-only
   receipt rendered in the timeline and Mission Details rail.
-- [ ] Deploy to Railway and verify the live authenticated panel.
+- [x] Deploy to Railway and verify live admin gates; authenticated refresh action
+  verified locally with regression and Playwright smoke because the admin
+  plaintext password is intentionally not stored in the workspace.
