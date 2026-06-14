@@ -6,6 +6,12 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.4 local session bridge: `bin/mouth-session-bridge` mirrors new
+  Telegram user turns from the active OpenClaw direct-session transcript into
+  Glass `/api/mouth/ingest`, deduped by session record id and draft-only. The
+  runner can resolve the ingest secret from Railway variables, and optional
+  user-systemd timer files under `ops/systemd/` run it every 30 seconds without
+  storing secrets.
 - Glass v0.6.3 runtime send handoff: `POST /api/mouth/reply-payload` returns
   the guarded OpenClaw `message(action="send")` payload for a pending reply, and
   `POST /api/mouth/reply-sent` writes `jobs/outbox/<command_id>/sent.json` only

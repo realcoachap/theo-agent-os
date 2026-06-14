@@ -110,6 +110,10 @@ Irreversible actions require approval before execution.
   `reply.json`, checks it against the original trusted command record, emits a
   narrow OpenClaw message payload, and writes `sent.json` only after OpenClaw
   returns a message id.
+- `bin/mouth-session-bridge` is the local runtime mirror from OpenClaw's
+  Telegram direct-session transcript to Glass `/api/mouth/ingest`. It must
+  filter to user turns, dedupe by OpenClaw record id, avoid backfilling whole
+  chat history on first run, and never dispatch jobs or send replies.
 - Before commits that touch adapters, worker registry, env plumbing, or model
   configuration, run a key-string guard such as:
   `git grep -nE '(sk-|api[_-]?key\s*[:=]|Bearer )'`.

@@ -355,6 +355,27 @@ from Railway env allowlists such as `THEO_TRUSTED_TELEGRAM_IDS` or
 `THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS`, not from the inbound event body. The
 result is a visible Mouth draft in Glass, not a runnable command.
 
+On Theokoles, the local bridge from the active OpenClaw Telegram direct-session
+transcript to that endpoint is:
+
+```bash
+scripts/run-mouth-session-bridge.sh --json
+```
+
+The wrapper resolves `THEO_GLASS_MOUTH_INGEST_SECRET` from the environment or
+from Railway project variables, then runs `bin/mouth-session-bridge`. The bridge
+reads only `role=user` Telegram turns from the configured session key, dedupes
+by OpenClaw record id in `runs/mouth-session-bridge-state.json`, and defaults to
+future-only startup so it does not flood Glass with old chat history. For a
+deliberate one-message smoke on first run:
+
+```bash
+scripts/run-mouth-session-bridge.sh --backfill-latest 1 --max-posts 1 --json
+```
+
+The optional user timer files live in `ops/systemd/` and run the same wrapper
+every 30 seconds. They contain no secrets.
+
 Glass can add a decision receipt to that draft:
 
 ```bash

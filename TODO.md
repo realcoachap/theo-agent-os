@@ -176,3 +176,11 @@ Noted by Theo - 2026-06-09
   payload, OpenClaw delivered Telegram message `10408`, and
   `/api/mouth/reply-sent` wrote a `sent.json` marker; unauth mark-sent stayed
   401.)
+- [x] Add a local OpenClaw direct-session bridge that mirrors only new
+  Telegram user turns into Glass Mouth, dedupes them, and avoids whole-history
+  backfills on first run.
+- [x] Live-verify and enable the local bridge timer. (2026-06-14: bridge smoke
+  posted command `43780814-a4ac-4a71-b963-2823d45a47e7` to live Glass with
+  36 older user turns bootstrapped as seen; immediate rerun and timer reruns
+  posted zero duplicates; user timer `theo-mouth-session-bridge.timer` active
+  every 30 seconds.)

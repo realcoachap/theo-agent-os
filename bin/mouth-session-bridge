@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Theo Agent OS Mouth session bridge v0.1.0 - Noted by Theo - 2026-06-14.
+
+Poll the active OpenClaw direct-session transcript and mirror new Telegram user
+turns into Glass Mouth through `/api/mouth/ingest`. This is deliberately
+draft-only: it never dispatches jobs and never sends Telegram replies.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SESSION_KEY = "agent:main:telegram:direct:7148548566"
+DEFAULT_GLASS_URL = "https://glass-production-d7ed.up.railway.app"
+DEFAULT_STATE = REPO_ROOT / "runs" / "mouth-session-bridge-state.json"
+DEFAULT_SESSION_STORE = Path("~/.openclaw/agents/main/sessions/sessions.json").expanduser()
+
+
+class BridgeError(RuntimeError):
+    """Raised for bridge failures that should be visible to the operator log."""
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": "0.1.0", "seen": [], "posted": []}
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise BridgeError(f"state file is not an object: {path}")
+    data.setdefault("version", "0.1.0")
+    data.setdefault("seen", [])
+    data.setdefault("posted", [])
+    return data
+
+
+def session_file_for_key(session_store: Path, session_key: str) -> Path:
+    data = read_json(session_store)
+    if not isinstance(data, dict):
+        raise BridgeError(f"session store is not an object: {session_store}")
+    entry = data.get(session_key)
+    if not isinstance(entry, dict):
+        raise BridgeError(f"session key not found: {session_key}")
+    session_file = entry.get("sessionFile")
+    if not isinstance(session_file, str) or not session_file.strip():
+        session_id = entry.get("sessionId")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise BridgeError(f"session entry is missing sessionFile/sessionId: {session_key}")
+        session_file = str(session_store.parent / f"{session_id}.jsonl")
+    path = Path(session_file).expanduser()
+    if not path.exists():
+        raise BridgeError(f"session file not found: {path}")
+    return path
+
+
+def as_text(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(str(item["text"]))
+        return "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+    return ""
+
+
+def iso_timestamp(value: object, fallback: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(fallback, str) and fallback.strip():
+        try:
+            return datetime.fromisoformat(fallback.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        except ValueError:
+            return fallback.strip()
+    if isinstance(value, (int, float)):
+        seconds = float(value) / 1000 if value > 10_000_000_000 else float(value)
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return utc_now()
+
+
+def parse_sender_ids(args: argparse.Namespace) -> set[str]:
+    sender_ids = {item.strip() for item in args.sender_id if item.strip()}
+    if not sender_ids and args.session_key.startswith("agent:main:telegram:direct:"):
+        sender_ids.add(args.session_key.rsplit(":", 1)[-1])
+    return sender_ids
+
+
+def iter_session_events(session_file: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
+    sender_ids = parse_sender_ids(args)
+    events: list[dict[str, Any]] = []
+    with session_file.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise BridgeError(f"invalid session JSONL on line {line_number}: {exc}") from exc
+            if not isinstance(record, dict):
+                continue
+            message = record.get("message")
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            if str(message.get("sourceChannel") or "") != "telegram":
+                continue
+            sender_id = str(message.get("senderId") or "").strip()
+            if sender_ids and sender_id not in sender_ids:
+                continue
+            text = as_text(message.get("content"))
+            if not text:
+                continue
+            record_id = str(record.get("id") or message.get("idempotencyKey") or "").strip()
+            if not record_id:
+                continue
+            chat_id = str(message.get("chatId") or sender_id).strip()
+            target_chat = chat_id if chat_id.startswith("telegram:") else f"telegram:{chat_id}"
+            events.append({
+                "record_id": record_id,
+                "event": {
+                    "channel": "telegram",
+                    "chat_id": target_chat,
+                    "message_id": record_id,
+                    "sender_id": sender_id,
+                    "sender": {
+                        "id": sender_id,
+                        "label": str(message.get("senderLabel") or message.get("senderName") or sender_id),
+                        "name": str(message.get("senderName") or message.get("senderLabel") or sender_id),
+                    },
+                    "timestamp": iso_timestamp(message.get("timestamp"), record.get("timestamp")),
+                    "text": text,
+                },
+            })
+    return events
+
+
+def select_events(events: list[dict[str, Any]], state: dict[str, Any], state_exists: bool, backfill_latest: int, max_posts: int) -> tuple[list[dict[str, Any]], set[str]]:
+    seen = {str(item) for item in state.get("seen", []) if isinstance(item, str)}
+    if not state_exists:
+        baseline = {str(item["record_id"]) for item in events}
+        if backfill_latest <= 0:
+            return [], baseline
+        queued = events[-backfill_latest:]
+        for item in queued:
+            baseline.discard(str(item["record_id"]))
+        return queued[:max_posts], baseline
+    queued = [item for item in events if str(item["record_id"]) not in seen]
+    return queued[:max_posts], seen
+
+
+def glass_ingest_url(glass_url: str) -> str:
+    return glass_url.rstrip("/") + "/api/mouth/ingest"
+
+
+def post_event(url: str, secret: str, event: dict[str, Any], timeout: int) -> dict[str, Any]:
+    body = json.dumps({"event": event}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/json",
+            "User-Agent": "theo-mouth-session-bridge/0.1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise BridgeError("Glass returned non-object JSON")
+            data["_status"] = response.status
+            return data
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        raise BridgeError(f"Glass ingest returned {exc.code}: {body_text[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise BridgeError(f"Glass ingest request failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BridgeError(f"Glass ingest returned invalid JSON: {exc}") from exc
+
+
+def trim_seen(seen: set[str], events: list[dict[str, Any]], limit: int = 1000) -> list[str]:
+    """Keep dedupe state in transcript order so old rows age out first."""
+    ordered = [str(item["record_id"]) for item in events if str(item["record_id"]) in seen]
+    extra = sorted(seen - set(ordered))
+    return (extra + ordered)[-limit:]
+
+
+def print_result(result: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(f"ok: queued={result['queued']} posted={result['posted']} bootstrapped={result['bootstrapped']} state={result['state_path']}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Mirror new OpenClaw Telegram user turns into Glass Mouth drafts.")
+    parser.add_argument("--session-key", default=os.environ.get("THEO_MOUTH_SESSION_KEY", DEFAULT_SESSION_KEY))
+    parser.add_argument("--session-store", type=Path, default=DEFAULT_SESSION_STORE)
+    parser.add_argument("--sender-id", action="append", default=[], help="Allowed Telegram sender id. Defaults to the direct session suffix.")
+    parser.add_argument("--glass-url", default=os.environ.get("THEO_GLASS_URL", DEFAULT_GLASS_URL))
+    parser.add_argument("--state", type=Path, default=Path(os.environ.get("THEO_MOUTH_SESSION_BRIDGE_STATE", str(DEFAULT_STATE))))
+    parser.add_argument("--backfill-latest", type=int, default=0, help="On first run, post only the latest N eligible user turns; older turns are marked seen.")
+    parser.add_argument("--max-posts", type=int, default=10)
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.max_posts < 1:
+        raise BridgeError("--max-posts must be at least 1")
+    state_path = args.state.expanduser()
+    lock_path = state_path.with_suffix(state_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print_result({"ok": True, "queued": 0, "posted": 0, "bootstrapped": 0, "state_path": str(state_path), "note": "bridge already running"}, args.json)
+            return 0
+        state_exists = state_path.exists()
+        state = load_state(state_path)
+        session_file = session_file_for_key(args.session_store.expanduser(), args.session_key)
+        events = iter_session_events(session_file, args)
+        queued, seen = select_events(events, state, state_exists, max(0, args.backfill_latest), args.max_posts)
+        bootstrapped = max(0, len(seen) - len({str(item) for item in state.get("seen", []) if isinstance(item, str)}))
+        posted: list[dict[str, Any]] = []
+        if queued and not args.dry_run:
+            secret = os.environ.get("THEO_GLASS_MOUTH_INGEST_SECRET", "").strip()
+            if not secret:
+                raise BridgeError("THEO_GLASS_MOUTH_INGEST_SECRET is required for non-dry-run posting")
+            url = glass_ingest_url(args.glass_url)
+            for item in queued:
+                response = post_event(url, secret, item["event"], args.timeout)
+                record = response.get("record") if isinstance(response, dict) else None
+                command_id = record.get("command_id") if isinstance(record, dict) else ""
+                seen.add(str(item["record_id"]))
+                posted.append({"record_id": str(item["record_id"]), "command_id": command_id, "status": response.get("_status", 0)})
+        elif queued:
+            posted = [{"record_id": str(item["record_id"]), "dry_run": True} for item in queued]
+        if not args.dry_run:
+            existing_posted = state.get("posted", [])
+            if not isinstance(existing_posted, list):
+                existing_posted = []
+            state.update({
+                "version": "0.1.0",
+                "updated_at": utc_now(),
+                "session_key": args.session_key,
+                "session_file": str(session_file),
+                "glass_url": args.glass_url,
+                "seen": trim_seen(seen, events),
+                "posted": (existing_posted + posted)[-200:],
+            })
+            write_json(state_path, state)
+        result = {
+            "ok": True,
+            "queued": len(queued),
+            "posted": len([item for item in posted if not item.get("dry_run")]),
+            "bootstrapped": bootstrapped,
+            "state_path": str(state_path),
+            "posted_records": posted,
+        }
+        print_result(result, args.json)
+        return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except BridgeError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(2)
