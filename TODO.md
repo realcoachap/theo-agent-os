@@ -202,5 +202,11 @@ Noted by Theo - 2026-06-09
   summary.
 - [x] Reframe reply actions around Queue Send and the local runtime bridge.
 - [x] Run local Glass/control/hardening regressions.
-- [ ] Deploy and live-verify the polish slice.
+- [x] Deploy and live-verify the polish slice. (2026-06-14: commit
+  `1583957`, Railway deployment `3ee5b2b2-8411-4cb2-b725-fc27257d5c6e`
+  SUCCESS; live `/login` returned 200, logged-out `/api/state` returned 401,
+  unauth `/api/mouth/pending-replies` returned 401, Mattermost `/api/v4/system/ping`
+  returned 200, local reply bridge dry-run stayed idle with `pending=0` /
+  `sent=0`, both Mouth timers stayed active, and desktop/mobile Playwright
+  screenshots showed the Agent Room / Team Room / Mouth jumps without overlap.)
 - [ ] Give Coach the full grounded roadmap after deployment verification.
