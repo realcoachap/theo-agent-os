@@ -163,4 +163,7 @@ Noted by Theo - 2026-06-09
   `/api/mouth/verdict`; unauth `/api/state` and unauth verdict stayed 401.)
 - [x] Add approved Mouth reply drafts that write schema-valid outbox payloads
   without sending Telegram messages.
-- [ ] Deploy and live-verify the approved reply-draft path.
+- [x] Deploy and live-verify the approved reply-draft path. (2026-06-14:
+  deployment `f664c722-f970-4c7c-8f93-bc5cb1adda68` SUCCESS; live smoke draft
+  `3baa9262-c5d5-4260-ab2f-6117df72ebe9` was ingested, approved, and given a
+  pending `jobs/outbox/.../reply.json`; unauth reply draft stayed 401.)
