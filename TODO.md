@@ -286,8 +286,9 @@ Noted by Theo - 2026-06-09
   exposing secret-shaped fields.
 - [x] Render the Actions tab and read receipts in the Mission timeline.
 - [x] Run local regressions, commit, deploy, and live-verify the read-only
-  action panel. (2026-06-14: commit `08183db`, Railway deployment
-  `7963432e-fc98-4e3a-b1b6-8ad99d65b9ff` SUCCESS; local py_compile,
+  action panel. (2026-06-14: code commit `08183db`, verification notes pushed,
+  and Railway head deployments succeeded through
+  `245203f7-1890-4af3-a4e0-b121961b4ada`; local py_compile,
   Glass live-sync, Control proxy, Shot 4 hardening, Mouth reply/session bridge,
   diff check, and desktop/mobile Actions tab smoke passed. Live checks passed:
   `/login` 200, logged-out `/api/state` 401, authenticated state exposed
