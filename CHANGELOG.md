@@ -6,6 +6,11 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.5.7 adds the first cockpit-native Spartacus action receipt:
+  `POST /api/control/spartacus/refresh` forces the existing gateway proof probe,
+  writes a local read-only receipt, and renders it in the Mission Control
+  timeline and right rail. It does not execute shell, forward tokens, or mutate
+  Spartacus.
 - Glass v0.5.6 Theo OS Mission Control cockpit: left workspace/channel/agent
   rail, center live mission timeline, right Mission Details rail, and an inert
   command composer stub. The new shell renders from existing `/api/state` data,

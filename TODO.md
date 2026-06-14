@@ -135,4 +135,6 @@ Noted by Theo - 2026-06-09
 - [x] Keep Spartacus as the VPS proof target and limit action controls to
   refresh/deep-link routes.
 - [x] Add regression markers for the new cockpit shell.
+- [x] Add the first cockpit-native Spartacus refresh action with a read-only
+  receipt rendered in the timeline and Mission Details rail.
 - [ ] Deploy to Railway and verify the live authenticated panel.

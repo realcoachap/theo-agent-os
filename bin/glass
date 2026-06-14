@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.5.6 - Noted by Theo - 2026-06-13.
+"""Theo Agent OS Glass v0.5.7 - Noted by Theo - 2026-06-13.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -31,6 +31,10 @@ v0.5.6 adds the first Theo OS Mission Control cockpit: left workspace/agent
 rail, center live mission timeline, right details rail, and an inert composer
 stub. It reuses the existing `/api/state` data and keeps Glass read-only for
 operations, with Spartacus actions limited to refresh/deep-link routes.
+
+v0.5.7 adds the first cockpit-native action receipt: an admin-gated, read-only
+Spartacus refresh action that forces the existing gateway proof probe and writes
+a visible receipt into the Mission Control timeline/right rail.
 
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
@@ -70,6 +74,7 @@ SECURITY_CHECKLIST = REPO_ROOT / "security" / "checklist.json"
 REGISTRY = REPO_ROOT / "registry" / "workers.json"
 PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
+CONTROL_RECEIPTS = Path(os.environ.get("THEO_GLASS_CONTROL_RECEIPTS_PATH", str(RUNS / "control-receipts.jsonl"))).expanduser()
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
 REMOTE_REVIEW = False
@@ -324,14 +329,14 @@ def control_node_target(node_id: str) -> tuple[str, int]:
     return host, port
 
 
-def control_node_health(node_id: str, host: str, port: int) -> dict[str, object]:
+def control_node_health(node_id: str, host: str, port: int, *, force: bool = False) -> dict[str, object]:
     """Small cached proof that Railway can reach and hear a gateway."""
     if not host:
         return {"status": "planned", "reachable": False, "responding": False, "checked_at": "", "latency_ms": None}
     cache_key = f"{node_id}:{host}:{port}"
     now = time.monotonic()
     cached = CONTROL_NODE_HEALTH_CACHE.get(cache_key)
-    if cached and now - cached[0] < CONTROL_NODE_PROBE_TTL_SECONDS:
+    if cached and not force and now - cached[0] < CONTROL_NODE_PROBE_TTL_SECONDS:
         return dict(cached[1])
 
     started = time.monotonic()
@@ -384,6 +389,28 @@ def control_node_health(node_id: str, host: str, port: int) -> dict[str, object]
     return dict(health)
 
 
+def control_node_row(node_id: str, definition: dict[str, object], host: str, port: int, health: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": node_id,
+        "label": definition["label"],
+        "role": definition["role"],
+        "route": f"{CONTROL_PROXY_PREFIX}/{node_id}/" if host else "",
+        "enabled": bool(host),
+        "status": health["status"],
+        "reachable": health["reachable"],
+        "responding": health["responding"],
+        "checked_at": health["checked_at"],
+        "latency_ms": health["latency_ms"],
+        "http_status": health.get("http_status"),
+        "probe": health.get("probe", ""),
+        "error": health.get("error", ""),
+        "target": f"{host}:{port}" if host else "",
+        "note": definition["note"],
+        "proof": definition["proof"],
+        "reference": node_id == "spartacus",
+    }
+
+
 def control_nodes() -> list[dict[str, object]]:
     nodes: list[dict[str, object]] = []
     for node_id, definition in CONTROL_NODE_DEFINITIONS.items():
@@ -398,26 +425,83 @@ def control_nodes() -> list[dict[str, object]]:
             "http_status": None,
             "probe": "",
         }
-        nodes.append({
-            "id": node_id,
-            "label": definition["label"],
-            "role": definition["role"],
-            "route": f"{CONTROL_PROXY_PREFIX}/{node_id}/" if enabled else "",
-            "enabled": enabled,
-            "status": health["status"],
-            "reachable": health["reachable"],
-            "responding": health["responding"],
-            "checked_at": health["checked_at"],
-            "latency_ms": health["latency_ms"],
-            "http_status": health.get("http_status"),
-            "probe": health.get("probe", ""),
-            "error": health.get("error", ""),
-            "target": f"{host}:{port}" if enabled else "",
-            "note": definition["note"],
-            "proof": definition["proof"],
-            "reference": node_id == "spartacus",
-        })
+        nodes.append(control_node_row(node_id, definition, host if enabled else "", port, health))
     return nodes
+
+
+def receipt_status_from_health(health: dict[str, object]) -> str:
+    if health.get("responding"):
+        return "success"
+    if health.get("reachable"):
+        return "blocked"
+    return "failed"
+
+
+def receipt_body_from_health(health: dict[str, object]) -> str:
+    if health.get("responding"):
+        return f"Gateway answered at the app layer with HTTP {health.get('http_status') or 'ok'}."
+    if health.get("reachable"):
+        return "Railway reached the gateway socket, but the app-layer response did not complete."
+    return "Railway could not reach the Spartacus gateway socket."
+
+
+def append_control_receipt(entry: dict[str, object]) -> None:
+    CONTROL_RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with CONTROL_RECEIPTS.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def control_receipts(limit: int = 12) -> list[dict[str, object]]:
+    if not CONTROL_RECEIPTS.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line in CONTROL_RECEIPTS.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+    return list(reversed(rows[-limit:]))
+
+
+def refresh_control_node(node_id: str, actor: str) -> tuple[dict[str, object], dict[str, object]]:
+    if node_id != "spartacus":
+        raise ValueError("only Spartacus refresh is available")
+    definition = CONTROL_NODE_DEFINITIONS[node_id]
+    host, port = control_node_target(node_id)
+    if not host:
+        health = {"status": "planned", "reachable": False, "responding": False, "checked_at": utc_now(), "latency_ms": None}
+    else:
+        health = control_node_health(node_id, host, port, force=True)
+    node = control_node_row(node_id, definition, host, port, health)
+    created_at = utc_now()
+    receipt = {
+        "id": f"control-refresh-{int(time.time())}-{secrets.token_hex(3)}",
+        "kind": "control_refresh",
+        "node_id": node_id,
+        "node_label": definition["label"],
+        "actor": actor,
+        "created_at": created_at,
+        "ts": created_at,
+        "title": "Spartacus status refreshed",
+        "summary": receipt_body_from_health(health),
+        "status": receipt_status_from_health(health),
+        "state": "read_only",
+        "route": node.get("route", ""),
+        "probe": health.get("probe", ""),
+        "http_status": health.get("http_status"),
+        "latency_ms": health.get("latency_ms"),
+        "checked_at": health.get("checked_at", ""),
+        "reachable": health.get("reachable", False),
+        "responding": health.get("responding", False),
+        "error": health.get("error", ""),
+        "authority": "Glass refreshed the proof only; Spartacus gateway token and device pairing remain the authority.",
+    }
+    append_control_receipt(receipt)
+    return receipt, node
 
 
 def control_default_url() -> str:
@@ -966,6 +1050,7 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "workers": workers(),
         "security": security_checklist(),
         "control_nodes": control_nodes(),
+        "control_receipts": control_receipts(),
         "control_ui_url": control_default_url(),
     }
 
@@ -1237,6 +1322,7 @@ h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0; }
 .muted { color: var(--muted); }
 button, a.button { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); min-height: 32px; padding: 0 10px; text-decoration: none; cursor: pointer; }
 button:hover, a.button:hover { border-color: #59616e; }
+button:disabled { cursor: progress; opacity: 0.62; }
 button.danger { color: var(--red); }
 pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word; border: 1px solid var(--line); border-radius: 6px; background: #0b0c0f; padding: 12px; }
 .hidden { display: none; }
@@ -1363,9 +1449,10 @@ function stateSignature(s) {
   const props = (s.memory_proposals || []).map(p => p.id);
   const reg = (((s.workers || {}).registry || {}).workers || []).map(w => `${w.name}:${w.status || ""}`);
   const control = (s.control_nodes || []).map(n => `${n.id}:${n.status}:${n.enabled ? 1 : 0}:${n.route || ""}`);
+  const controlReceipts = (s.control_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    control, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, controlReceipts, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -1373,6 +1460,14 @@ function esc(v) {
 }
 function cls(status) { return ["success","partial","blocked","failed"].includes(status) ? status : ""; }
 function short(id) { return String(id || "").slice(0, 8); }
+function receiptLabel(id) {
+  const value = String(id || "");
+  if (value.startsWith("control-refresh-")) {
+    const parts = value.split("-");
+    return `refresh-${parts.slice(-2).join("-")}`;
+  }
+  return short(value);
+}
 function timeLabel(value) {
   if (!value) return "";
   const date = new Date(String(value));
@@ -1697,6 +1792,10 @@ function accentForStatus(status) {
   if (status === "partial" || status === "blocked") return "accent-amber";
   return "accent-blue";
 }
+function latestControlReceipt() {
+  const receipts = appState ? (appState.control_receipts || []) : [];
+  return receipts[0] || null;
+}
 function eventTime(item) {
   const date = new Date(String(item.ts || ""));
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -1715,6 +1814,22 @@ function missionItems() {
         : "Gateway proof is not fully responding yet.",
       status: reference.status || "unknown",
       meta: [`probe ${reference.probe || "tcp"}`, Number.isFinite(Number(reference.latency_ms)) ? `${reference.latency_ms}ms` : ""].filter(Boolean)
+    });
+  }
+  for (const receipt of (appState.control_receipts || []).slice(0, 6)) {
+    items.push({
+      type: "control",
+      ts: receipt.created_at || receipt.ts,
+      actor: receipt.node_label || "Spartacus",
+      title: receipt.title || "Control action receipt",
+      body: receipt.summary || "",
+      status: receipt.status || "review",
+      meta: [
+        receipt.state || "read_only",
+        receipt.probe ? `probe ${receipt.probe}` : "",
+        Number.isFinite(Number(receipt.latency_ms)) ? `${receipt.latency_ms}ms` : "",
+        receipt.http_status ? `HTTP ${receipt.http_status}` : ""
+      ].filter(Boolean)
     });
   }
   for (const run of (appState.runs || []).slice(0, 8)) {
@@ -1784,10 +1899,43 @@ function composerBoundary(event) {
   const status = document.getElementById("composer-status");
   if (status) status.textContent = "Composer is staged only: dispatch still goes through bin/mouth + bin/dispatch with confirm and receipts.";
 }
+async function refreshSpartacusAction(button) {
+  const status = document.getElementById("composer-status") || document.getElementById("control-action-status");
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Refreshing...";
+  }
+  if (status) status.textContent = "Refreshing Spartacus proof and writing a read-only receipt...";
+  try {
+    const res = await fetch("/api/control/spartacus/refresh", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Theo-Glass": "1"},
+      body: JSON.stringify({node_id: "spartacus"})
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    appState = data.state || appState;
+    lastSig = stateSignature(appState);
+    pendingSig = null;
+    render();
+    const freshStatus = document.getElementById("composer-status") || document.getElementById("control-action-status");
+    if (freshStatus) freshStatus.textContent = `Receipt ${receiptLabel((data.receipt || {}).id)} recorded: ${(data.receipt || {}).status || "done"}.`;
+  } catch (err) {
+    if (status) status.textContent = `Refresh blocked: ${err.message || err}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Refresh Spartacus";
+    }
+    updateSyncIndicator();
+  }
+}
 function renderMission() {
   const reference = (appState.control_nodes || []).find(n => n.reference) || {};
   const run = focusRun();
   const tests = (run || {}).tests || {};
+  const receipt = latestControlReceipt();
   const items = missionItems();
   const progress = run ? runProgress(run) : (reference.responding ? 100 : 50);
   return `<section>
@@ -1806,6 +1954,8 @@ function renderMission() {
         <span class="pill">gateway-owned auth</span>
         <span class="pill">${esc((appState.artifacts || []).length)} artifacts</span>
         <span class="pill">tests ${esc(tests.passed ?? 0)} / ${esc(tests.failed ?? 0)}</span>
+        ${receipt ? `<span class="pill ${cls(receipt.status)}">last receipt ${esc(timeLabel(receipt.created_at))}</span>` : ""}
+        <button type="button" onclick="refreshSpartacusAction(this)">Refresh Spartacus</button>
       </div>
     </article>
     <div class="timeline">${items.map(timelineItem).join("") || empty("No mission activity yet.")}</div>
@@ -1813,7 +1963,7 @@ function renderMission() {
       <div class="composer-row">
         <button type="button" onclick="manualRefresh()">+</button>
         <input aria-label="Mission command composer" placeholder="Type /status, /receipt, /control, or mention an agent..." autocomplete="off">
-        <button type="button" onclick="current='Control'; render()">@Spartacus</button>
+        <button type="button" onclick="refreshSpartacusAction(this)">@Spartacus</button>
         <button type="submit">Stage</button>
       </div>
       <div class="composer-status" id="composer-status">Composer is read-only in this slice; no command is dispatched from Glass.</div>
@@ -1826,8 +1976,12 @@ function renderMissionRail() {
   const run = focusRun();
   const tests = (run || {}).tests || {};
   const artifacts = (appState.artifacts || []).slice(0, 4);
+  const controlReceipt = latestControlReceipt();
   const gateLabel = appState.writes_enabled ? "admin session" : "read-only gate";
   const receiptPreview = run ? `${run.summary || "Run receipt"}\nrun_id: ${run.job_id}\nstatus: ${run.status}\nstate: ${run.state}\nresult: ${run.result_path || ""}` : "No focused run yet.";
+  const controlReceiptPreview = controlReceipt
+    ? `${controlReceipt.title || "Spartacus receipt"}\nreceipt_id: ${controlReceipt.id}\nstatus: ${controlReceipt.status}\nstate: ${controlReceipt.state}\nprobe: ${controlReceipt.probe || "n/a"}\nlatency: ${Number.isFinite(Number(controlReceipt.latency_ms)) ? `${controlReceipt.latency_ms}ms` : "n/a"}\n${controlReceipt.summary || ""}`
+    : "No Spartacus action receipt yet.";
   return `<div class="rail-header">
     <div>
       <div class="rail-title">Mission Details</div>
@@ -1855,10 +2009,14 @@ function renderMissionRail() {
     <pre>${esc(receiptPreview)}</pre>
   </section>
   <section class="rail-section">
+    <div class="row"><div class="title">Spartacus action receipt</div>${controlReceipt ? `<span class="pill ${cls(controlReceipt.status)}">${esc(controlReceipt.status)}</span>` : ""}</div>
+    <pre>${esc(controlReceiptPreview)}</pre>
+  </section>
+  <section class="rail-section">
     <div class="title">Next action</div>
     <div class="stack" style="gap:8px;margin-top:10px">
       <a class="button" target="_blank" rel="noreferrer" href="${esc(reference.route || "/control/spartacus/")}">Open Spartacus Control</a>
-      <button onclick="manualRefresh()">Refresh Spartacus status</button>
+      <button onclick="refreshSpartacusAction(this)">Refresh Spartacus status</button>
       <button onclick="current='Artifacts'; render()">Open artifacts</button>
     </div>
     <p class="subtle">Mutating actions wait for confirm + receipt gates; this panel observes and routes.</p>
@@ -1891,10 +2049,12 @@ function renderControl() {
       <p class="muted">Spartacus is the reference remote node: a VPS-backed OpenClaw gateway reachable from Glass through Railway. This proves the operator surface without a physical machine.</p>
       <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
         <a class="button" target="_blank" rel="noreferrer" href="${esc(reference.route || "/control/spartacus/")}">Open Spartacus Control</a>
+        <button onclick="refreshSpartacusAction(this)">Refresh Spartacus status</button>
         <a class="button" target="_blank" rel="noreferrer" href="/control/">Open Compatibility Route</a>
         <span class="pill success">admin-gated</span>
         <span class="pill">gateway-owned auth</span>
       </div>
+      <div class="subtle" id="control-action-status" style="margin-top:8px">Refresh writes a local Glass receipt only; it does not mutate Spartacus.</div>
       <div class="mono subtle" style="margin-top:8px">Spartacus remote gateway configured</div>
       <div class="subtle">last gateway probe ${esc(checked)}${reference.http_status ? ` · HTTP ${esc(reference.http_status)}` : ""}${reference.probe ? ` · ${esc(reference.probe)}` : ""}</div>
       ${reference.error ? `<div class="blocked-box">probe failed: ${esc(reference.error)}</div>` : ""}
@@ -2040,7 +2200,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.5.6"
+    server_version = "TheoAgentOSGlass/0.5.7"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -2059,11 +2219,20 @@ class Handler(BaseHTTPRequestHandler):
     def send_json(self, data: object, status: int = 200, extra_headers: list[tuple[str, str]] | None = None) -> None:
         body = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
         self._headers(status, "application/json; charset=utf-8", extra_headers)
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            # Browsers and smoke tests can close while a large refreshed state
+            # is being returned. The action already completed; do not turn that
+            # disconnect into a noisy server traceback.
+            pass
 
     def send_html(self, body: str, status: int = 200, extra_headers: list[tuple[str, str]] | None = None) -> None:
         self._headers(status, "text/html; charset=utf-8", extra_headers)
-        self.wfile.write(body.encode("utf-8"))
+        try:
+            self.wfile.write(body.encode("utf-8"))
+        except BrokenPipeError:
+            pass
 
     def forbidden(self, reason: str = "forbidden") -> None:
         self.send_json({"ok": False, "error": reason}, 403)
@@ -2398,6 +2567,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             write_json(SECURITY_CHECKLIST, checklist)
             self.send_json({"ok": True})
+            return
+        if parsed.path == "/api/control/spartacus/refresh":
+            node_id = data.get("node_id", "spartacus")
+            if node_id != "spartacus":
+                self.send_json({"ok": False, "error": "only Spartacus refresh is available"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "local-operator"
+            try:
+                receipt, node = refresh_control_node("spartacus", actor)
+            except ValueError as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+                return
+            self.send_json({
+                "ok": True,
+                "receipt": receipt,
+                "node": node,
+                "state": state(self.admin_authenticated()),
+            })
             return
         self.send_json({"ok": False, "error": "not found"}, 404)
 

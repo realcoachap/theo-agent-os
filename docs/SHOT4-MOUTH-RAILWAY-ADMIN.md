@@ -66,6 +66,10 @@ environment-variable UI or CLI.
   added in v0.5.6. Caesar and Theokoles are present as disabled/planned entries
   until Railway can reach their gateways through Tailscale or another guarded
   relay.
+- Glass v0.5.7 adds the first safe cockpit action: Refresh Spartacus forces the
+  existing gateway proof probe, records a local read-only control receipt, and
+  renders that receipt in the mission timeline/details rail. It does not execute
+  commands, forward gateway tokens, or mutate the remote node.
 
 ## First Proof
 
@@ -79,7 +83,7 @@ environment-variable UI or CLI.
 6. Logout clears the session cookie.
 
 This document originally described the Shot 4 admin foundation before the
-Spartacus Control proxy landed. The current next layer is confirm + receipt
-action gates for the inert Mission Control composer, plus Caesar/Theokoles
-reachability, without broadening Glass into raw shell or arbitrary tunnel
-access.
+Spartacus Control proxy landed. The current next layer is guarded confirm gates
+for mutating actions and the inert Mission Control composer, plus
+Caesar/Theokoles reachability, without broadening Glass into raw shell or
+arbitrary tunnel access.

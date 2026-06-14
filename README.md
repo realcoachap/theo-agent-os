@@ -210,7 +210,8 @@ In Railway admin mode, Glass now opens on a Theo OS Mission Control cockpit:
 a left workspace/channel/agent rail, center live timeline, right Mission
 Details rail, and an inert command composer stub. The cockpit renders from the
 existing `/api/state` snapshot, so it can show runs, Mouth records, receipts,
-artifacts, workers, and the Spartacus proof without adding a new executor.
+artifacts, workers, control receipts, and the Spartacus proof without adding a
+new executor.
 
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where
@@ -218,9 +219,10 @@ OpenClaw Control node registry where
 its compatibility alias. Glass probes the configured Spartacus gateway from the
 web tier, verifies an app-layer gateway response, and marks it as the reference
 remote node, proving the path without a physical machine. The Spartacus action
-surface remains refresh/deep-link only for now; mutating controls wait for
-confirm + receipt gates. Caesar and Theokoles remain registry entries, but stay disabled
-until Railway can reach them through Tailscale or another guarded relay. The
+surface can now force a read-only refresh probe and write a local Glass receipt;
+deep links still open the raw Control UI when needed. Mutating controls wait for
+confirm + receipt gates. Caesar and Theokoles remain registry entries, but stay
+disabled until Railway can reach them through Tailscale or another guarded relay. The
 proxy stores no gateway token, strips Glass cookies and auth headers
 before forwarding upstream, strips upstream cookies before returning responses,
 and keeps each OpenClaw gateway's own token/device-pairing checks as the real

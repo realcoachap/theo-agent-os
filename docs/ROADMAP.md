@@ -35,6 +35,9 @@ Noted by Theo - 2026-06-09
   left workspace/channel/agent rail, live mission timeline, right Mission
   Details rail, and an inert command composer stub. Mutating node actions still
   wait for confirm + receipt gates.
+- Glass v0.5.7 adds the first safe node action inside that cockpit: Refresh
+  Spartacus forces the existing proof probe, writes a local read-only receipt,
+  and renders it in the timeline/details rail without mutating the remote node.
 - Caesar and Theokoles are registry entries, but their routes stay disabled
   until Railway can reach their gateways through Tailscale or another guarded
   relay.
