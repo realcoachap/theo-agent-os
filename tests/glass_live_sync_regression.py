@@ -32,9 +32,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
@@ -111,6 +113,28 @@ def request_json(url: str, payload: dict[str, object], headers: dict[str, str] |
         return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
+class TeamWebhookHandler(BaseHTTPRequestHandler):
+    posts: list[dict[str, object]] = []
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        payload = json.loads(body)
+        self.__class__.posts.append({
+            "path": self.path,
+            "payload": payload,
+        })
+        raw = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
 def assert_login_preserves_deep_links() -> None:
     """Control UI links carry token fragments, so login must not drop the URL."""
     src = GLASS.read_text(encoding="utf-8")
@@ -139,11 +163,17 @@ def assert_shell_and_state() -> None:
     port = free_port()
     receipt_path = REPO_ROOT / "runs" / ".test-control-receipts.jsonl"
     mouth_verdicts_path = REPO_ROOT / "runs" / ".test-mouth-verdicts.jsonl"
+    team_receipts_path = REPO_ROOT / "runs" / ".test-team-room-receipts.jsonl"
     mouth_index = REPO_ROOT / "runs" / "mouth-index.jsonl"
     original_mouth_index = mouth_index.read_text(encoding="utf-8") if mouth_index.exists() else None
     ingested_command_id = ""
     receipt_path.unlink(missing_ok=True)
     mouth_verdicts_path.unlink(missing_ok=True)
+    team_receipts_path.unlink(missing_ok=True)
+    TeamWebhookHandler.posts = []
+    webhook_server = HTTPServer(("127.0.0.1", 0), TeamWebhookHandler)
+    webhook_thread = threading.Thread(target=webhook_server.serve_forever, daemon=True)
+    webhook_thread.start()
     proc = subprocess.Popen(
         [PYTHON, str(GLASS), "--host", "127.0.0.1", "--port", str(port)],
         cwd=REPO_ROOT,
@@ -151,6 +181,9 @@ def assert_shell_and_state() -> None:
             **os.environ,
             "THEO_GLASS_CONTROL_RECEIPTS_PATH": str(receipt_path),
             "THEO_GLASS_MOUTH_VERDICTS_PATH": str(mouth_verdicts_path),
+            "THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH": str(team_receipts_path),
+            "THEO_GLASS_TEAM_ROOM_WEBHOOK_URL": f"http://127.0.0.1:{webhook_server.server_port}/hooks/glass-test",
+            "THEO_GLASS_TEAM_ROOM_RECEIPT_SECRET": "team-receipt-secret",
             "THEO_GLASS_MOUTH_INGEST_SECRET": "shot4-ingest-secret",
             "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS": "7148548566",
             "THEO_TRUSTED_TELEGRAM_IDS": "7148548566",
@@ -177,7 +210,10 @@ def assert_shell_and_state() -> None:
             'Open Agent Room',
             'Open Team Room',
             'Team Rooms',
+            'Team Receipts',
             'team-room-link',
+            'team_room_receipts',
+            'Mattermost delivery',
             'Mouth pipeline',
             'function renderMouthFlow',
             'function mouthNextAction',
@@ -209,7 +245,7 @@ def assert_shell_and_state() -> None:
             assert_true(marker in html, f"served shell is missing live-sync control {marker}")
         body = urllib.request.urlopen(base_url + "/api/state", timeout=8).read().decode("utf-8")
         snapshot = json.loads(body)
-        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms"):
+        for key in ("generated_at", "runs", "mouth", "security", "writes_enabled", "admin", "control_nodes", "control_receipts", "team_rooms", "team_room_receipts"):
             assert_true(key in snapshot, f"/api/state snapshot missing key: {key}")
         team_room_ids = {room.get("id") for room in snapshot["team_rooms"]}
         assert_true({"mission-control", "agent-chatter", "theo-receipts"}.issubset(team_room_ids), "/api/state missing team room links")
@@ -237,6 +273,33 @@ def assert_shell_and_state() -> None:
         receipts = refreshed_state.get("control_receipts")
         assert_true(isinstance(receipts, list) and receipts, "updated state does not expose control receipts")
         assert_true(receipts[0].get("id") == receipt.get("id"), "latest control receipt is not first in state")
+        team_receipts = refreshed_state.get("team_room_receipts")
+        assert_true(isinstance(team_receipts, list) and team_receipts, "updated state does not expose team-room receipts")
+        control_team_receipt = team_receipts[0]
+        assert_true(control_team_receipt.get("kind") == "control_refresh", "control refresh did not create a team-room receipt")
+        assert_true(((control_team_receipt.get("mattermost") or {}).get("status") == "sent"), "control team-room receipt was not sent to webhook")
+        status, deploy_rejected = request_json(
+            base_url + "/api/team-room/deploy-receipt",
+            {"title": "Regression deploy", "summary": "Should require auth", "status": "success"},
+        )
+        assert_true(status == 403 and deploy_rejected.get("ok") is False, f"unauthorized deploy receipt did not fail closed: {status} {deploy_rejected}")
+        status, deploy_receipt = request_json(
+            base_url + "/api/team-room/deploy-receipt",
+            {
+                "title": "Regression deploy",
+                "summary": "Head deploy smoke stayed green.",
+                "status": "success",
+                "room_id": "deploys",
+                "deployment_id": "deploy-regression-1",
+                "fields": {"deployment": "deploy-regression-1", "secret_token": "must-not-ship"},
+            },
+            {"Authorization": "Bearer team-receipt-secret"},
+        )
+        assert_true(status == 200, f"deploy receipt returned {status}: {deploy_receipt}")
+        deploy_record = deploy_receipt.get("receipt")
+        assert_true(isinstance(deploy_record, dict) and deploy_record.get("kind") == "deploy_receipt", "deploy receipt has wrong shape")
+        assert_true(deploy_record.get("room_id") == "deploys", "deploy receipt did not target deploys room")
+        assert_true("secret_token" not in (deploy_record.get("fields") or {}), "deploy receipt did not scrub secret-shaped fields")
         event = {
             "version": "0.6.0-test",
             "channel": "telegram",
@@ -261,6 +324,8 @@ def assert_shell_and_state() -> None:
         assert_true(record.get("mode") == "draft", "Mouth ingest should force draft mode")
         assert_true(record.get("result_path") == "", "Mouth ingest unexpectedly dispatched a result")
         assert_true(((record.get("source") or {}).get("trusted") is True), "trusted Telegram sender was not trusted")
+        webhook_text = "\n".join(str(post.get("payload", {}).get("text", "")) for post in TeamWebhookHandler.posts)
+        assert_true("OK let's get it done" not in webhook_text, "team-room receipt leaked Telegram message text")
         ingested_state = ingested.get("state")
         assert_true(isinstance(ingested_state, dict), "Mouth ingest did not return refreshed state")
         mouth_records = ingested_state.get("mouth")
@@ -371,6 +436,10 @@ def assert_shell_and_state() -> None:
             {"Authorization": "Bearer shot4-ingest-secret"},
         )
         assert_true(status == 200 and drained.get("pending") == [], "sent reply still appeared in runtime pending replies")
+        team_log = team_receipts_path.read_text(encoding="utf-8")
+        for marker in ("control_refresh", "deploy_receipt", "mouth_received", "mouth_verdict", "mouth_reply_draft", "mouth_reply_send_approval", "mouth_reply_sent"):
+            assert_true(marker in team_log, f"team-room receipt log is missing {marker}")
+        assert_true(len(TeamWebhookHandler.posts) >= 7, "fake Mattermost webhook did not receive each receipt class")
     finally:
         proc.terminate()
         try:
@@ -378,8 +447,11 @@ def assert_shell_and_state() -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=3)
+        webhook_server.shutdown()
+        webhook_server.server_close()
         receipt_path.unlink(missing_ok=True)
         mouth_verdicts_path.unlink(missing_ok=True)
+        team_receipts_path.unlink(missing_ok=True)
         if ingested_command_id:
             shutil.rmtree(REPO_ROOT / "jobs" / "inbox" / ingested_command_id, ignore_errors=True)
             shutil.rmtree(REPO_ROOT / "jobs" / "outbox" / ingested_command_id, ignore_errors=True)

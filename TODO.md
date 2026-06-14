@@ -213,3 +213,17 @@ Noted by Theo - 2026-06-09
   (2026-06-14: sent Telegram message `10444` with the shipped v0.6.6 checkpoint
   plus near/next/later roadmap for Glass / Theo OS, Mouth, Mattermost team
   room, Nango connectors, OpenBrain/Obsidian memory, and Ascending / Ask Theo.)
+
+## 2026-06-14 Task: Outbound Mattermost Receipts
+
+- [x] Add an append-only team-room receipt log surfaced through `/api/state`.
+- [x] Add optional Mattermost webhook delivery with room-specific env support
+  and secret-shaped field scrubbing.
+- [x] Emit receipts for safe control refreshes and Mouth receive / gate /
+  draft / queue / sent lifecycle events.
+- [x] Add guarded deploy receipt intake at `/api/team-room/deploy-receipt` for
+  deployment automation.
+- [x] Extend the Glass live-sync regression with a fake Mattermost webhook,
+  deploy receipt auth checks, and privacy proof that Telegram message text is
+  not copied into team-room receipt posts.
+- [ ] Deploy and live-verify the Mattermost receipt slice.

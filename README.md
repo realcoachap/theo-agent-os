@@ -221,6 +221,16 @@ Team-room links default to the live Mattermost pilot at
 `THEO_GLASS_TEAM_ROOM_<ROOM_ID>_URL`, for example
 `THEO_GLASS_TEAM_ROOM_AGENT_CHATTER_URL`; the base fallback can be overridden
 with `THEO_GLASS_TEAM_ROOM_BASE_URL`. Glass stores no Mattermost secrets.
+Outbound team-room receipts are append-only JSONL under
+`runs/team-room-receipts.jsonl` by default and are exposed through
+`/api/state` as `team_room_receipts`. If a Mattermost incoming webhook is
+supplied with `THEO_GLASS_TEAM_ROOM_WEBHOOK_URL`, or room-specific
+`THEO_GLASS_TEAM_ROOM_<ROOM_ID>_WEBHOOK_URL`, Glass posts compact receipt
+summaries for safe control refreshes, Mouth receive/gate/draft/queue/sent
+events, and guarded deploy notes. Deploy automation can call
+`POST /api/team-room/deploy-receipt` with `THEO_GLASS_TEAM_ROOM_RECEIPT_SECRET`
+or the existing runtime ingress secret; secret-shaped receipt fields are
+scrubbed before they are stored or posted.
 
 Glass also exposes the Spartacus VPS proof-of-concept: a strict, admin-gated
 OpenClaw Control node registry where

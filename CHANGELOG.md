@@ -6,6 +6,13 @@ Noted by Theo - 2026-06-09
 
 ### Added
 
+- Glass v0.6.7 outbound Mattermost receipt spine: safe control refreshes, Mouth
+  receive/gate/draft/queue/sent events, and guarded deploy notes now create
+  `runs/team-room-receipts.jsonl` records surfaced through `/api/state` as
+  `team_room_receipts`. Optional Mattermost incoming webhooks post compact
+  no-secret summaries via `THEO_GLASS_TEAM_ROOM_WEBHOOK_URL` or room-specific
+  webhook env vars, while `/api/team-room/deploy-receipt` gives deploy
+  automation a bearer-guarded receipt path.
 - Glass v0.6.6 team-room and Mouth UX polish: `/api/state` exposes an
   allowlisted Mattermost team-room model, sidebar agent rows now link to
   Control / Agent Room plus the relevant room, Mission Control exposes direct

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Theo Agent OS Glass v0.6.6 - Noted by Theo - 2026-06-14.
+"""Theo Agent OS Glass v0.6.7 - Noted by Theo - 2026-06-14.
 
 v0.5.0 adds live-state sync for the admin door: visibility-aware polling that
 only re-renders on real change and never clobbers an open run detail, artifact
@@ -71,6 +71,11 @@ agent rail rows become deep links into the node/team room surfaces, Mission
 Control gets direct team-room jumps, and Mouth renders a compact approval ->
 draft -> queue -> sent pipeline instead of raw records only.
 
+v0.6.7 adds the first outbound Mattermost receipt spine. Glass records
+team-room receipts for Mouth gates, reply drafts, send queues, delivery
+markers, deploy notes, and safe control refreshes, then optionally posts a
+compact no-secret summary through an allowlisted Mattermost incoming webhook.
+
 Localhost-only Mission Control for Shot 2. Glass reads Foundry run envelopes
 and exposes only two tiny write lanes: memory proposal verdict queue entries
 and manual security checklist attestations.
@@ -99,6 +104,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import urllib.error
+import urllib.request
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +120,7 @@ PINNED_VERSION = REPO_ROOT / "registry" / "pinned-version.txt"
 RESULT_SCHEMA = REPO_ROOT / "schemas" / "result.schema.json"
 REPLY_SCHEMA = REPO_ROOT / "schemas" / "reply.schema.json"
 CONTROL_RECEIPTS = Path(os.environ.get("THEO_GLASS_CONTROL_RECEIPTS_PATH", str(RUNS / "control-receipts.jsonl"))).expanduser()
+TEAM_ROOM_RECEIPTS = Path(os.environ.get("THEO_GLASS_TEAM_ROOM_RECEIPTS_PATH", str(RUNS / "team-room-receipts.jsonl"))).expanduser()
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 MAX_PREVIEW_BYTES = 120_000
 REMOTE_REVIEW = False
@@ -130,6 +138,7 @@ ADMIN_LOGIN_WINDOW_ENV = "THEO_GLASS_ADMIN_LOGIN_WINDOW_SECONDS"
 MOUTH_INGEST_SECRET_ENV = "THEO_GLASS_MOUTH_INGEST_SECRET"
 MOUTH_INGEST_TRUSTED_TELEGRAM_IDS_ENV = "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_IDS"
 MOUTH_INGEST_TRUSTED_TELEGRAM_CHATS_ENV = "THEO_GLASS_MOUTH_TRUSTED_TELEGRAM_CHATS"
+TEAM_ROOM_RECEIPT_SECRET_ENV = "THEO_GLASS_TEAM_ROOM_RECEIPT_SECRET"
 DEFAULT_ADMIN_TTL_SECONDS = 8 * 60 * 60
 DEFAULT_ADMIN_LOGIN_MAX_FAILURES = 5
 DEFAULT_ADMIN_LOGIN_WINDOW_SECONDS = 5 * 60
@@ -174,6 +183,8 @@ CONTROL_NODE_DEFINITIONS = {
 }
 TEAM_ROOM_BASE_URL_ENV = "THEO_GLASS_TEAM_ROOM_BASE_URL"
 TEAM_ROOM_BASE_URL_DEFAULT = "http://185.111.156.109:8065"
+TEAM_ROOM_WEBHOOK_URL_ENV = "THEO_GLASS_TEAM_ROOM_WEBHOOK_URL"
+TEAM_ROOM_WEBHOOK_TIMEOUT_SECONDS = 3
 TEAM_ROOM_DEFINITIONS = {
     "mission-control": {
         "label": "Mission Control",
@@ -221,6 +232,8 @@ CONTROL_PROXY_HOP_HEADERS = {
 CONTROL_PROXY_PRIVATE_HEADERS = {"cookie", "authorization"}
 MOUTH_VERDICT_STATUS = {"approve": "approved", "hold": "held", "reject": "rejected"}
 MOUTH_VERDICT_VERSION = "0.6.1"
+TEAM_ROOM_RECEIPT_VERSION = "0.6.7"
+TEAM_ROOM_RECEIPT_STATUSES = {"success", "partial", "blocked", "failed", "review"}
 
 
 def utc_now() -> str:
@@ -385,9 +398,19 @@ def control_node_env_name(node_id: str, suffix: str) -> str:
     return f"THEO_GLASS_CONTROL_{node_id.upper()}_{suffix}"
 
 
-def team_room_env_name(room_id: str) -> str:
+def team_room_safe_id(room_id: str) -> str:
     safe_id = "".join(ch if ch.isalnum() else "_" for ch in room_id.upper())
+    return safe_id
+
+
+def team_room_env_name(room_id: str) -> str:
+    safe_id = team_room_safe_id(room_id)
     return f"THEO_GLASS_TEAM_ROOM_{safe_id}_URL"
+
+
+def team_room_webhook_env_name(room_id: str) -> str:
+    safe_id = team_room_safe_id(room_id)
+    return f"THEO_GLASS_TEAM_ROOM_{safe_id}_WEBHOOK_URL"
 
 
 def safe_public_url(value: str) -> str:
@@ -398,6 +421,10 @@ def safe_public_url(value: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
     return value
+
+
+def configured_team_room_id(room_id: str) -> str:
+    return room_id if room_id in TEAM_ROOM_DEFINITIONS else "theo-receipts"
 
 
 def team_rooms() -> list[dict[str, object]]:
@@ -416,6 +443,155 @@ def team_rooms() -> list[dict[str, object]]:
             "deep_linked": bool(explicit_url),
         })
     return rooms
+
+
+def team_room_by_id(room_id: str) -> dict[str, object]:
+    wanted = configured_team_room_id(room_id)
+    for room in team_rooms():
+        if room.get("id") == wanted:
+            return room
+    definition = TEAM_ROOM_DEFINITIONS["theo-receipts"]
+    return {
+        "id": "theo-receipts",
+        "label": definition["label"],
+        "channel": definition["channel"],
+        "purpose": definition["purpose"],
+        "url": "",
+        "configured": False,
+        "deep_linked": False,
+    }
+
+
+def team_room_webhook_url(room_id: str) -> str:
+    """Resolve an optional Mattermost incoming webhook without exposing it."""
+    wanted = configured_team_room_id(room_id)
+    explicit = safe_public_url(os.environ.get(team_room_webhook_env_name(wanted), ""))
+    return explicit or safe_public_url(os.environ.get(TEAM_ROOM_WEBHOOK_URL_ENV, ""))
+
+
+def clean_receipt_fields(fields: object) -> dict[str, str]:
+    """Keep outbound receipts useful while dropping secret-shaped fields."""
+    if not isinstance(fields, dict):
+        return {}
+    blocked_words = ("secret", "token", "password", "authorization", "cookie", "key")
+    clean: dict[str, str] = {}
+    for raw_key, raw_value in fields.items():
+        key = str(raw_key).strip().lower().replace(" ", "_")[:48]
+        if not key or any(word in key for word in blocked_words):
+            continue
+        if isinstance(raw_value, (str, int, float, bool)) or raw_value is None:
+            value = str(raw_value if raw_value is not None else "")
+        else:
+            value = json.dumps(raw_value, sort_keys=True)
+        clean[key] = value[:240]
+    return clean
+
+
+def team_room_receipt_text(receipt: dict[str, object]) -> str:
+    """Mattermost markdown kept compact so receipts scan well in the room."""
+    title = str(receipt.get("title") or "Glass receipt")
+    status = str(receipt.get("status") or "review")
+    summary = str(receipt.get("summary") or "")
+    lines = [
+        f"**{title}**",
+        f"status: `{status}`",
+    ]
+    if summary:
+        lines.append(summary)
+    source_id = str(receipt.get("source_id") or receipt.get("id") or "")
+    if source_id:
+        lines.append(f"source: `{source_id[:80]}`")
+    room_channel = str(receipt.get("room_channel") or "")
+    if room_channel:
+        lines.append(f"room: `#{room_channel}`")
+    fields = receipt.get("fields") if isinstance(receipt.get("fields"), dict) else {}
+    for key, value in fields.items():
+        if value:
+            lines.append(f"- {key}: `{str(value)[:160]}`")
+    return "\n".join(lines)
+
+
+def deliver_team_room_receipt(receipt: dict[str, object]) -> dict[str, object]:
+    webhook = team_room_webhook_url(str(receipt.get("room_id") or "theo-receipts"))
+    if not webhook:
+        return {"status": "disabled", "reason": "webhook not configured"}
+    payload = json.dumps({"text": team_room_receipt_text(receipt)}).encode("utf-8")
+    request = urllib.request.Request(
+        webhook,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TEAM_ROOM_WEBHOOK_TIMEOUT_SECONDS) as response:
+            response.read(2048)
+            status_code = int(getattr(response, "status", 0) or 0)
+    except urllib.error.HTTPError as exc:
+        return {"status": "failed", "http_status": exc.code, "error": f"http_{exc.code}"}
+    except Exception as exc:
+        return {"status": "failed", "error": type(exc).__name__}
+    if 200 <= status_code < 300:
+        return {"status": "sent", "http_status": status_code}
+    return {"status": "failed", "http_status": status_code, "error": f"http_{status_code}"}
+
+
+def append_team_room_receipt(entry: dict[str, object]) -> None:
+    TEAM_ROOM_RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with TEAM_ROOM_RECEIPTS.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def team_room_receipts(limit: int = 20) -> list[dict[str, object]]:
+    if not TEAM_ROOM_RECEIPTS.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line in TEAM_ROOM_RECEIPTS.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+    return list(reversed(rows[-limit:]))
+
+
+def publish_team_room_receipt(
+    *,
+    kind: str,
+    title: str,
+    summary: str,
+    status: str = "review",
+    room_id: str = "theo-receipts",
+    actor: str = "Glass",
+    source_id: str = "",
+    fields: object = None,
+) -> dict[str, object]:
+    """Record and optionally post a no-secret receipt to Mattermost."""
+    safe_status = status if status in TEAM_ROOM_RECEIPT_STATUSES else "review"
+    room = team_room_by_id(room_id)
+    created_at = utc_now()
+    receipt: dict[str, object] = {
+        "id": f"team-receipt-{int(time.time())}-{secrets.token_hex(3)}",
+        "kind": kind[:80],
+        "version": TEAM_ROOM_RECEIPT_VERSION,
+        "created_at": created_at,
+        "ts": created_at,
+        "title": title[:160],
+        "summary": summary[:600],
+        "status": safe_status,
+        "actor": actor[:80],
+        "source_id": source_id[:160],
+        "room_id": room.get("id", "theo-receipts"),
+        "room_label": room.get("label", "Theo Receipts"),
+        "room_channel": room.get("channel", "theo-receipts"),
+        "room_url": room.get("url", ""),
+        "fields": clean_receipt_fields(fields),
+    }
+    receipt["mattermost"] = deliver_team_room_receipt(receipt)
+    append_team_room_receipt(receipt)
+    return receipt
 
 
 def control_node_target(node_id: str) -> tuple[str, int]:
@@ -611,6 +787,22 @@ def refresh_control_node(node_id: str, actor: str) -> tuple[dict[str, object], d
         "authority": "Glass refreshed the proof only; Spartacus gateway token and device pairing remain the authority.",
     }
     append_control_receipt(receipt)
+    publish_team_room_receipt(
+        kind="control_refresh",
+        title="Spartacus status refreshed",
+        summary=receipt["summary"],
+        status=receipt["status"],
+        room_id="theo-receipts",
+        actor=actor,
+        source_id=receipt["id"],
+        fields={
+            "node": definition["label"],
+            "state": receipt["state"],
+            "probe": receipt.get("probe", ""),
+            "http_status": receipt.get("http_status", ""),
+            "latency_ms": receipt.get("latency_ms", ""),
+        },
+    )
     return receipt, node
 
 
@@ -761,8 +953,19 @@ def mouth_ingest_secret() -> str:
     return os.environ.get(MOUTH_INGEST_SECRET_ENV, "").strip()
 
 
+def team_room_receipt_secret() -> str:
+    """Use a distinct deploy/receipt secret when set, otherwise reuse runtime ingress."""
+    return os.environ.get(TEAM_ROOM_RECEIPT_SECRET_ENV, "").strip() or mouth_ingest_secret()
+
+
 def mouth_ingest_secret_matches(value: object) -> bool:
     secret = mouth_ingest_secret()
+    supplied = str(value or "").strip()
+    return bool(secret and supplied and hmac.compare_digest(supplied, secret))
+
+
+def team_room_receipt_secret_matches(value: object) -> bool:
+    secret = team_room_receipt_secret()
     supplied = str(value or "").strip()
     return bool(secret and supplied and hmac.compare_digest(supplied, secret))
 
@@ -788,6 +991,15 @@ def mouth_ingest_authenticated(headers: object) -> bool:
 
 def mouth_ingest_body_authenticated(data: dict[str, object]) -> bool:
     return mouth_ingest_secret_matches(data.get("ingest_secret"))
+
+
+def team_room_receipt_authenticated(headers: object) -> bool:
+    supplied = bearer_token(headers.get("Authorization")) or str(headers.get("X-Theo-Team-Receipt") or "").strip()
+    return team_room_receipt_secret_matches(supplied)
+
+
+def team_room_receipt_body_authenticated(data: dict[str, object]) -> bool:
+    return team_room_receipt_secret_matches(data.get("receipt_secret"))
 
 
 def mouth_ingest_env() -> dict[str, str]:
@@ -900,6 +1112,20 @@ def write_mouth_verdict(command_id: str, verdict: str, note: str, actor: str) ->
     MOUTH_VERDICTS.parent.mkdir(parents=True, exist_ok=True)
     with MOUTH_VERDICTS.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({**entry, "lifecycle_path": rel(verdict_path)}, sort_keys=True) + "\n")
+    publish_team_room_receipt(
+        kind="mouth_verdict",
+        title=f"Mouth {status}",
+        summary=f"Glass recorded a {status} gate for Mouth command {command_id[:8]}.",
+        status="success" if status == "approved" else "blocked" if status == "held" else "failed",
+        room_id="theo-receipts",
+        actor=actor,
+        source_id=command_id,
+        fields={
+            "command_id": command_id,
+            "verdict": verdict,
+            "record": rel(mouth_path),
+        },
+    )
     lifecycle["record_path"] = rel(verdict_path)
     return lifecycle, ""
 
@@ -959,6 +1185,21 @@ def write_mouth_reply_draft(command_id: str, text: str, actor: str) -> tuple[dic
     if errors:
         reply_path.unlink(missing_ok=True)
         return None, "reply schema invalid: " + "; ".join(errors)
+    publish_team_room_receipt(
+        kind="mouth_reply_draft",
+        title="Mouth reply drafted",
+        summary=f"Glass wrote a sender-guard-compatible reply draft for {command_id[:8]}.",
+        status="review",
+        room_id="theo-receipts",
+        actor=actor,
+        source_id=command_id,
+        fields={
+            "command_id": command_id,
+            "channel": channel,
+            "target": target,
+            "reply_path": rel(reply_path),
+        },
+    )
     reply["record_path"] = rel(reply_path)
     reply["drafted_by"] = actor
     return reply, ""
@@ -1029,6 +1270,20 @@ def mark_mouth_reply_sent(command_id: str, message_id: str) -> tuple[dict[str, o
         return None, f"sent marker unreadable: {exc}"
     if not isinstance(sent, dict):
         return None, "sent marker invalid"
+    publish_team_room_receipt(
+        kind="mouth_reply_sent",
+        title="Mouth reply sent",
+        summary=f"OpenClaw returned a delivery marker for Mouth reply {command_id[:8]}.",
+        status="success",
+        room_id="theo-receipts",
+        actor="OpenClaw runtime",
+        source_id=command_id,
+        fields={
+            "command_id": command_id,
+            "message_id": clean_message_id,
+            "sent_path": rel(sent_path),
+        },
+    )
     sent["record_path"] = rel(sent_path)
     return sent, ""
 
@@ -1073,6 +1328,20 @@ def queue_mouth_reply_send(command_id: str, actor: str) -> tuple[dict[str, objec
         "status": "queued",
     }
     write_json(approval_path, approval)
+    publish_team_room_receipt(
+        kind="mouth_reply_send_approval",
+        title="Mouth reply queued",
+        summary=f"Glass queued Mouth reply {command_id[:8]} for the local OpenClaw sender bridge.",
+        status="review",
+        room_id="theo-receipts",
+        actor=actor,
+        source_id=command_id,
+        fields={
+            "command_id": command_id,
+            "approval_path": rel(approval_path),
+            "reply_path": rel(reply_path),
+        },
+    )
     approval["record_path"] = rel(approval_path)
     return approval, ""
 
@@ -1532,6 +1801,7 @@ def state(authenticated: bool = False) -> dict[str, object]:
         "control_receipts": control_receipts(),
         "control_ui_url": control_default_url(),
         "team_rooms": team_rooms(),
+        "team_room_receipts": team_room_receipts(),
     }
 
 
@@ -2083,9 +2353,10 @@ function stateSignature(s) {
   const control = (s.control_nodes || []).map(n => `${n.id}:${n.status}:${n.enabled ? 1 : 0}:${n.route || ""}`);
   const controlReceipts = (s.control_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}`);
   const teamRooms = (s.team_rooms || []).map(r => `${r.id}:${r.url || ""}:${r.deep_linked ? 1 : 0}`);
+  const teamReceipts = (s.team_room_receipts || []).map(r => `${r.id}:${r.status}:${r.created_at || ""}:${((r.mattermost || {}).status) || ""}`);
   const op = (s.workers || {}).operator || {};
   return JSON.stringify({runs, mouth, replies, sec, props, reg, op: `${op.up ? 1 : 0}:${op.stale ? 1 : 0}`,
-    control, controlReceipts, teamRooms, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
+    control, controlReceipts, teamRooms, teamReceipts, auth: (s.admin || {}).authenticated, writes: s.writes_enabled});
 }
 
 function esc(v) {
@@ -2667,6 +2938,22 @@ function missionItems() {
       ].filter(Boolean)
     });
   }
+  for (const receipt of (appState.team_room_receipts || []).slice(0, 6)) {
+    const delivery = (receipt.mattermost || {}).status || "recorded";
+    items.push({
+      type: "team",
+      ts: receipt.created_at || receipt.ts,
+      actor: receipt.room_label || "Team Room",
+      title: receipt.title || "Team room receipt",
+      body: receipt.summary || "",
+      status: receipt.status || "review",
+      meta: [
+        receipt.room_channel ? `#${receipt.room_channel}` : "",
+        `Mattermost ${delivery}`,
+        receipt.kind || ""
+      ].filter(Boolean)
+    });
+  }
   for (const run of (appState.runs || []).slice(0, 8)) {
     const tests = run.tests || {};
     items.push({
@@ -3140,6 +3427,7 @@ function renderWorkers() {
   const operator = (appState.workers || {}).operator || {};
   const registry = ((appState.workers || {}).registry || {}).workers || [];
   const rooms = appState.team_rooms || [];
+  const teamReceipts = appState.team_room_receipts || [];
   return `<section class="grid">
     <article class="card">
       <div class="row"><div class="title">Team Rooms</div><span class="pill">${esc(rooms.length)}</span></div>
@@ -3152,6 +3440,22 @@ function renderWorkers() {
           </div>
           ${room.configured ? `<a class="button team-room-link" target="_blank" rel="noreferrer" href="${esc(room.url)}">Open</a>` : `<span class="pill blocked">not configured</span>`}
         </div>`).join("") || `<p class="muted">No team rooms configured.</p>`}
+      </div>
+    </article>
+    <article class="card">
+      <div class="row"><div class="title">Team Receipts</div><span class="pill">${esc(teamReceipts.length)}</span></div>
+      <p class="muted">Outbound receipt log for Mattermost delivery from Glass, Mouth, and deploy events.</p>
+      <div class="stack" style="gap:8px">
+        ${teamReceipts.slice(0, 8).map(receipt => {
+          const delivery = (receipt.mattermost || {}).status || "recorded";
+          return `<div class="row">
+            <div>
+              <div class="title" style="font-size:13px">${esc(receipt.title || "Receipt")}</div>
+              <div class="subtle">#${esc(receipt.room_channel || "theo-receipts")} · Mattermost delivery ${esc(delivery)} · ${esc(timeLabel(receipt.created_at || receipt.ts))}</div>
+            </div>
+            <span class="pill ${cls(receipt.status)}">${esc(receipt.status || "review")}</span>
+          </div>`;
+        }).join("") || `<p class="muted">No team-room receipts yet.</p>`}
       </div>
     </article>
     <article class="card">
@@ -3227,7 +3531,7 @@ setInterval(updateSyncIndicator, 1000);
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TheoAgentOSGlass/0.5.9"
+    server_version = "TheoAgentOSGlass/0.6.7"
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -3568,6 +3872,21 @@ class Handler(BaseHTTPRequestHandler):
             if record is None:
                 self.send_json({"ok": False, "error": error or "Mouth ingest failed"}, 400)
                 return
+            publish_team_room_receipt(
+                kind="mouth_received",
+                title="Mouth event received",
+                summary=f"OpenClaw mirrored a Telegram turn into Mouth command {str(record.get('command_id') or '')[:8]}.",
+                status="review",
+                room_id="theo-receipts",
+                actor="OpenClaw runtime",
+                source_id=str(record.get("command_id") or ""),
+                fields={
+                    "command_id": str(record.get("command_id") or ""),
+                    "channel": str(event.get("channel") or ""),
+                    "message_id": str(event.get("message_id") or ""),
+                    "record": str(record.get("record_path") or ""),
+                },
+            )
             self.send_json({
                 "ok": True,
                 "record": record,
@@ -3616,6 +3935,45 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 "ok": True,
                 "sent": sent,
+                "state": state(self.admin_authenticated()),
+            })
+            return
+        if parsed.path == "/api/team-room/deploy-receipt":
+            if REMOTE_REVIEW:
+                self.forbidden("Railway review mode is read-only")
+                return
+            if not self.check_host():
+                return
+            runtime_authenticated = team_room_receipt_authenticated(self.headers)
+            data = self.post_json()
+            if data is None:
+                return
+            if not runtime_authenticated and not team_room_receipt_body_authenticated(data):
+                if not self.check_post():
+                    return
+            title = data.get("title", "Deployment receipt")
+            summary = data.get("summary", "")
+            status = data.get("status", "review")
+            room_id = data.get("room_id", "deploys")
+            source_id = data.get("deployment_id") or data.get("source_id") or ""
+            fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+            if not isinstance(title, str) or not isinstance(summary, str) or not isinstance(status, str) or not isinstance(room_id, str):
+                self.send_json({"ok": False, "error": "invalid team-room receipt payload"}, 400)
+                return
+            actor = admin_user() if REMOTE_ADMIN else "deploy-runtime" if runtime_authenticated else "local-operator"
+            receipt = publish_team_room_receipt(
+                kind="deploy_receipt",
+                title=title,
+                summary=summary,
+                status=status,
+                room_id=room_id,
+                actor=actor,
+                source_id=str(source_id),
+                fields=fields,
+            )
+            self.send_json({
+                "ok": True,
+                "receipt": receipt,
                 "state": state(self.admin_authenticated()),
             })
             return
