@@ -209,4 +209,7 @@ Noted by Theo - 2026-06-09
   returned 200, local reply bridge dry-run stayed idle with `pending=0` /
   `sent=0`, both Mouth timers stayed active, and desktop/mobile Playwright
   screenshots showed the Agent Room / Team Room / Mouth jumps without overlap.)
-- [ ] Give Coach the full grounded roadmap after deployment verification.
+- [x] Give Coach the full grounded roadmap after deployment verification.
+  (2026-06-14: sent Telegram message `10444` with the shipped v0.6.6 checkpoint
+  plus near/next/later roadmap for Glass / Theo OS, Mouth, Mattermost team
+  room, Nango connectors, OpenBrain/Obsidian memory, and Ascending / Ask Theo.)
